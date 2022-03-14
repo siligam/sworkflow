@@ -39,7 +39,7 @@ tasks = {
     "postprocess": "sbatch postprocessing.sh"
 }
 
-s = sdepend.sDepend(dep, tasks)
+s = sworkflow.sDepend(dep, tasks)
 s.submit()
 s.visualize(as_ascii=True)
 ┌────────────┐     ┌──────────┐     ┌─────────────┐
