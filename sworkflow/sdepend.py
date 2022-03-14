@@ -111,6 +111,7 @@ class sDepend:
             task = self.format_task(task, task_name)
             self.process(task, task_name, dryrun)
             self.jobs[task_name] = task
+        return self.task_ids
 
     def process(self, task, task_name, dryrun):
         func = sp.check_output
