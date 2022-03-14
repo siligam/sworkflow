@@ -5,7 +5,7 @@ from collections import defaultdict
 from graphlib import TopologicalSorter
 import subprocess as sp
 import random
-
+import shlex
 
 """
 A python interface to script slurm dependency.
@@ -31,7 +31,8 @@ tasks = {
 __all__ = ['submit', 'visualize', 'sDepend']
 
 keywords = "after afterok afternotok afterany aftercorr singleton".split()
-default_task = "sbatch sleep_for_second.sh"
+# thanks to Marcus.Boden for suggesting the wapper
+default_task = 'sbatch --wrap="sleep 2"'
 
 
 def submit(dependency, tasks=None, dryrun=False):
@@ -91,18 +92,18 @@ class sDepend:
         return ",".join(result)
 
     def format_task(self, task, task_name=None):
-        parts = task.split()
+        parts = shlex.split(task)
         if 'sbatch' not in parts:
             parts.insert(0, 'sbatch')
         if '--parsable' not in parts:
             parts.insert(1, '--parsable')
         dep = self.dependency.get(task_name)
         if dep is None:
-            return " ".join(parts)
+            return shlex.join(parts)
         dep = self.update_dependency(dep)
         dep = "--depend=" + dep
         parts.insert(2, dep)
-        return " ".join(parts)
+        return shlex.join(parts)
 
     def submit(self, dryrun=False):
         ordering = task_ordering(self.dependency)
@@ -117,7 +118,7 @@ class sDepend:
         func = sp.check_output
         if dryrun:
             func = FakeProcess.check_output
-        job_id = func(task.split())
+        job_id = func(shlex.split(task))
         job_id = job_id.decode().strip()
         self.task_ids[task_name] = job_id
 
@@ -149,6 +150,6 @@ class sDepend:
 class FakeProcess:
     @staticmethod
     def check_output(task):
-        print(" ".join(task))
+        print(shlex.join(task))
         return bytes(str(random.randint(0, 1000)), encoding='utf-8')
         
