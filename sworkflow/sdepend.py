@@ -74,7 +74,7 @@ def task_ordering(dependency):
 class sDepend:
     def __init__(self, dependency, tasks=None):
         self.dependency = dependency
-        self.tasks = tasks
+        self.tasks = tasks or {}
         self.task_ids = {}
         self.jobs = {}
 
