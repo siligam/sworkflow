@@ -1,1 +1,1 @@
-from .sdepend import sDepend, submit, visualize
+from .suite import Suite, submit, visualize

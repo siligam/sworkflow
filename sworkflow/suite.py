@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# sdepend.py
+# suite.py
 
 from collections import defaultdict
 from graphlib import TopologicalSorter
@@ -28,7 +28,7 @@ tasks = {
 }
 """
 
-__all__ = ['submit', 'visualize', 'sDepend']
+__all__ = ['submit', 'visualize', 'Suite']
 
 keywords = "after afterok afternotok afterany aftercorr singleton".split()
 # thanks to Marcus.Boden for suggesting the wapper
@@ -36,13 +36,13 @@ default_task = 'sbatch --wrap="sleep 2"'
 
 
 def submit(dependency, tasks=None, dryrun=False):
-    s = sDepend(dependency, tasks=tasks)
+    s = Suite(dependency, tasks=tasks)
     s.submit(dryrun=dryrun)
     return s
 
 
 def visualize(dependency, tasks=None, as_ascii=True):
-    s = sDepend(dependency, tasks=tasks)
+    s = Suite(dependency, tasks=tasks)
     s.visualize(as_ascii=as_ascii)
     return s
 
