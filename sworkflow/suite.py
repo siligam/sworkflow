@@ -71,7 +71,7 @@ def task_ordering(dependency):
     return list(TopologicalSorter(d).static_order())
 
 
-class sDepend:
+class Suite:
     def __init__(self, dependency, tasks=None):
         self.dependency = dependency
         self.tasks = tasks or {}
