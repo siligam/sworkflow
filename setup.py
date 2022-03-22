@@ -19,6 +19,7 @@ setup(
     install_requires=[
         "graphviz",
         "requests",
+        "click",
     ],
     entry_points="""
         [console_scripts]

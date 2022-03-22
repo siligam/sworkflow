@@ -1,5 +1,5 @@
 setuptools
-PyYAML
+pyyaml
 graphviz
 python>=3.9
 requests
