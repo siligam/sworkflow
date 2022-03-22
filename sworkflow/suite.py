@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 # suite.py
-
-from collections import defaultdict
-from graphlib import TopologicalSorter
-import subprocess as sp
 import random
 import shlex
+import subprocess as sp
+import graphviz
+from . import utils
 
 """
 A python interface to script slurm dependency.
 
 Specify dependencies between tasks as a python dictionary mapping.
-Tasks are to be defined in a seperate mapping.
+Tasks are to be defined in a separate mapping.
 
 task dependency example:
 
@@ -21,135 +20,112 @@ dependency = {
     'B': 'after:A',
   }
 
-tasks = {
+jobs = {
     'A': 'sleep.sh',
     'B': 'sbatch --parsable sleep.sh',
     'C': 'sbatch --mem 40G sleep.sh'
 }
+
+s = Suite(dependency, jobs)
 """
 
-__all__ = ['submit', 'visualize', 'Suite']
-
-keywords = "after afterok afternotok afterany aftercorr singleton".split()
-# thanks to Marcus.Boden for suggesting the wapper
 default_task = 'sbatch --wrap="sleep 2"'
 
 
-def submit(dependency, tasks=None, dryrun=False):
-    s = Suite(dependency, tasks=tasks)
-    s.submit(dryrun=dryrun)
-    return s
-
-
-def visualize(dependency, tasks=None, as_ascii=True):
-    s = Suite(dependency, tasks=tasks)
-    s.visualize(as_ascii=as_ascii)
-    return s
-
-
-def is_valid(dependency):
-    res = task_ordering(dependency)
-    return True if res else False
-
-
-def transform(dependency):
-    """
-    task dependency mapping stripping off keywords
-    """
-    names = defaultdict(set)
-    for name, value in dependency.items():
-        value = value.replace(',', ':')
-        for item in value.split(':'):
-            if item not in keywords:
-                names[name].add(item)
-    return dict(names)
-
-
-def task_ordering(dependency):
-    "ordering of tasks"
-    d = transform(dependency)
-    return list(TopologicalSorter(d).static_order())
-
-
 class Suite:
-    def __init__(self, dependency, tasks=None):
+
+    def __init__(self, dependency: dict, jobs: dict = None, job_ids: dict = None):
         self.dependency = dependency
-        self.tasks = tasks or {}
-        self.task_ids = {}
-        self.jobs = {}
+        self.jobs = jobs or {}
+        self.job_ids = job_ids or {}
+        self.job_template = {}
+        self.status = {}
+        self.filename = None
 
-    def update_dependency(self, task_dependency):
-        result = []
-        for part in task_dependency.split(','):
-            sub = []
-            for item in part.split(':'):
-                if item in keywords:
-                    sub.append(item)
-                    continue
-                task_id = self.task_ids[item]
-                sub.append(task_id)
-            result.append(':'.join(sub))
-        return ",".join(result)
+    @classmethod
+    def load_yaml(cls, filename):
+        d = utils.load_yaml(filename)
+        dependency = d['dependency']
+        jobs = d.get('jobs', {})
+        job_ids = d.get('job_ids', {})
+        c = cls(dependency, jobs, job_ids)
+        c.filename = filename
+        return c
 
-    def format_task(self, task, task_name=None):
-        parts = shlex.split(task)
-        if 'sbatch' not in parts:
-            parts.insert(0, 'sbatch')
-        if '--parsable' not in parts:
-            parts.insert(1, '--parsable')
-        dep = self.dependency.get(task_name)
-        if dep is None:
-            return shlex.join(parts)
-        dep = self.update_dependency(dep)
-        dep = "--depend=" + dep
-        parts.insert(2, dep)
-        return shlex.join(parts)
+    def save_yaml(self, filename, include_job_ids=True):
+        d = {'dependency': self.dependency, 'jobs': self.jobs}
+        if include_job_ids:
+            d['job_ids'] = self.job_ids
+        utils.save_yaml(d, filename)
 
-    def submit(self, dryrun=False):
-        ordering = task_ordering(self.dependency)
+    def prepare_jobs(self):
+        dependency = self.dependency
+        ordering = utils.task_ordering(dependency)
+        dependency_placeholder = utils.as_placeholder(dependency)
+        jobs = self.jobs
+        result = {}
         for task_name in ordering:
-            task = self.tasks.get(task_name, default_task)
-            task = self.format_task(task, task_name)
-            self.process(task, task_name, dryrun)
-            self.jobs[task_name] = task
-        return self.task_ids
+            job = jobs.get(task_name, default_task)
+            parts = shlex.split(job)
+            if 'sbatch' not in parts:
+                parts.insert(0, 'sbatch')
+            if '--parsable' not in parts:
+                parts.insert(1, '--parsable')
+            if task_name in dependency_placeholder:
+                dep = dependency_placeholder.get(task_name)
+                dep = "--dependency=" + dep
+                parts.insert(2, dep)
+            result[task_name] = shlex.join(parts)
+        self.job_template.update(result)
 
-    def process(self, task, task_name, dryrun):
-        func = sp.check_output
-        if dryrun:
-            func = FakeProcess.check_output
-        job_id = func(shlex.split(task))
-        job_id = job_id.decode().strip()
-        self.task_ids[task_name] = job_id
+    def submit(self, dry_run=False):
+        func = (sp.check_output, utils.check_output)[dry_run]
+        self.filename = self.filename or 'submit.yaml'
+        filename = self.filename
+        ordering = utils.task_ordering(self.dependency)
+        self.prepare_jobs()
+        job_template = self.job_template
+        job_ids = self.job_ids
+        for task_name in ordering:
+            job = job_template.get(task_name)
+            job = job.format_map(job_ids)
+            job_id = func(shlex.split(job))
+            job_ids[task_name] = job_id.decode('utf-8').strip()
+        self.save_yaml(filename)
+        return self.job_ids
 
-    def visualize(self, as_ascii=False):
-        import graphviz
-        d = transform(self.dependency)
-        ordering = task_ordering(self.dependency)
+    def graph(self, rankdir='LR'):
+        d = utils.as_dict(self.dependency)
+        ordering = utils.task_ordering(self.dependency)
         g = graphviz.Digraph()
+        g.graph_attr['rankdir'] = rankdir
         for name in ordering:
-            task_id = self.task_ids.get(name)
-            if task_id is None:
-                g.node(name, name)
-            else:
-                g.node(name, f"{name} - {task_id}")
+            label = [name, self.job_ids.get(name, ''), self.status.get(name, '')]
+            label = ' '.join(filter(None, label))
+            g.node(name, label)
         for name, values in d.items():
             for item in values:
                 g.edge(item, name)
+        return g
+
+    def visualize(self, rankdir='LR', as_ascii=True, view_pdf=True):
+        g = self.graph(rankdir=rankdir)
+        if utils.in_jupyter():
+            return g
         if as_ascii:
-            import requests
-            url = 'https://dot-to-ascii.ggerganov.com/dot-to-ascii.php'
-            g.graph_attr['rankdir'] = 'LR'
-            params = {'boxart': 1, 'src': str(g)}
-            res = requests.get(url, params=params).text
-            print(res)
-            return
-        g.render(f"slurmviz-{str(random.randint(0, 10))}", view=True)
+            utils.dot_to_ascii(g)
+            return g
+        g.render(f"slurmviz-{str(random.randint(0, 20))}", view=view_pdf)
 
-
-class FakeProcess:
-    @staticmethod
-    def check_output(task):
-        print(shlex.join(task))
-        return bytes(str(random.randint(0, 1000)), encoding='utf-8')
-        
+    def update_status(self):
+        sacct_cmd = 'sacct -n -P --format="jobid,state" -j {}'
+        jobids = ','.join(self.job_ids)
+        cmd = sacct_cmd.format(jobids)
+        out = sp.check_output(shlex.split(cmd)).decode('utf-8')
+        status = dict([line.strip().split('|') for line in out.splitlines()])
+        result = []
+        for name, job_id in self.job_ids.items():
+            st = status.get(job_id)
+            self.status[name] = st
+            result.append((name, job_id, st))
+        return result
