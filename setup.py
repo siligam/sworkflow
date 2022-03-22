@@ -10,7 +10,7 @@ long_description = (here / "README.md").read_text(encoding='utf-8')
 setup(
     name='sworkflow',
     version="0.0.1",
-    description='pythoic workflow for job dependency with slurm',
+    description='workflow for job dependency with slurm',
     long_description=long_description,
     long_description_content_type='text/markdown',
     python_requires=">=3.9",
@@ -20,6 +20,10 @@ setup(
         "graphviz",
         "requests",
     ],
+    entry_points="""
+        [console_scripts]
+        sworkflow=sworkflow:cli
+    """,
     classifiers=[
         'Development Status :: 0.0.1',
         'Intended Audience :: Developers',

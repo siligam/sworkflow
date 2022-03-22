@@ -1,1 +1,2 @@
-from .suite import Suite, submit, visualize
+from .suite import Suite
+from .cli import cli
