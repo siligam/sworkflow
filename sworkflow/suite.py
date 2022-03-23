@@ -119,7 +119,7 @@ class Suite:
 
     def update_status(self):
         sacct_cmd = 'sacct -n -P --format="jobid,state" -j {}'
-        jobids = ','.join(self.job_ids)
+        jobids = ','.join(self.job_ids.values())
         cmd = sacct_cmd.format(jobids)
         out = sp.check_output(shlex.split(cmd)).decode('utf-8')
         status = dict([line.strip().split('|') for line in out.splitlines()])
