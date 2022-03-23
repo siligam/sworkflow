@@ -20,6 +20,7 @@ setup(
         "graphviz",
         "requests",
         "click",
+        "pyyaml",
     ],
     entry_points="""
         [console_scripts]
