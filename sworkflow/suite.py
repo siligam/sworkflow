@@ -95,6 +95,10 @@ class Suite:
         return self.job_ids
 
     def graph(self, rankdir='LR'):
+        try:
+            self.update_status()
+        except sp.CalledProcessError:
+            pass
         d = utils.as_dict(self.dependency)
         ordering = utils.task_ordering(self.dependency)
         g = graphviz.Digraph()
@@ -119,11 +123,13 @@ class Suite:
 
     def update_status(self):
         sacct_cmd = 'sacct -n -P --format="jobid,state" -j {}'
+        result = []
+        if not self.job_ids:
+            return result
         jobids = ','.join(self.job_ids.values())
         cmd = sacct_cmd.format(jobids)
         out = sp.check_output(shlex.split(cmd)).decode('utf-8')
         status = dict([line.strip().split('|') for line in out.splitlines()])
-        result = []
         for name, job_id in self.job_ids.items():
             st = status.get(job_id)
             self.status[name] = st
