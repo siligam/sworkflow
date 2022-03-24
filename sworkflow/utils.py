@@ -119,3 +119,8 @@ def in_jupyter():
     if 'terminal' in str(ipy):
         return False
     return True
+
+
+class Default(dict):
+    def __missing__(self, key):
+        return f'{{{key}}}'

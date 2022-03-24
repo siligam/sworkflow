@@ -88,7 +88,7 @@ class Suite:
         job_ids = self.job_ids
         for task_name in ordering:
             job = job_template.get(task_name)
-            job = job.format_map(job_ids)
+            job = job.format_map(utils.Default(job_ids))
             job_id = func(shlex.split(job))
             job_ids[task_name] = job_id.decode('utf-8').strip()
         self.save_yaml(filename)
