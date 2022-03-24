@@ -95,6 +95,7 @@ class Suite:
         return self.job_ids
 
     def graph(self, rankdir='LR'):
+        self.update_status()
         d = utils.as_dict(self.dependency)
         ordering = utils.task_ordering(self.dependency)
         g = graphviz.Digraph()
@@ -123,7 +124,7 @@ class Suite:
         if not self.job_ids:
             return result
         try:
-            sp.call(['sacct'])
+            sp.call(['sacct'], stdout=sp.PIPE, close_fds=True)
         except FileNotFoundError:
             return result
         jobids = ','.join(self.job_ids.values())
