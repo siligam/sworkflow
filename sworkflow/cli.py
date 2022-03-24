@@ -24,18 +24,22 @@ pass_config = click.make_pass_decorator(Config, ensure=True)
 
 @click.group()
 @click.option(
+    '-f',
     '--filename',
     envvar="SFILE",
     type=click.Path(),
     help='yaml file containing job dependency',
-    required=True,
 )
 @pass_config
 def cli(ctx, filename):
-    s = Suite.load_yaml(filename)
+    "slurm job dependency management"
+    sfile = os.environ.get('SFILE', None)
+    if filename:
+        s = Suite.load_yaml(filename)
+    else:
+        s = Suite(dependency={})
     ctx.suite = s
     ctx.filename = filename
-    sfile = os.environ.get('SFILE', None)
     if sfile:
         click.echo('suite definition: {}\n'.format(sfile))
 
