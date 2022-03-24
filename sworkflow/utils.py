@@ -130,13 +130,13 @@ def parse_array_status(mapping):
     result = {}
     array = defaultdict(Counter)
     for job_id, state in mapping.items():
-	if '_' in job_id and '.' not in job_id:
+        if '_' in job_id and '.' not in job_id:
             name, _ = job_id.split('_')
             state = state[0]
             array[name][state] += 1
     for job_id, counts in array.items():
-	tmp = []
-	for name, count in counts.items():
+        tmp = []
+        for name, count in counts.items():
             tmp.append(f"{count}{name}")
-	result[job_id] = "-".join(tmp)
+        result[job_id] = "-".join(tmp)
     return result
