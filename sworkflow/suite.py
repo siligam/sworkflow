@@ -130,8 +130,9 @@ class Suite:
         cmd = sacct_cmd.format(jobids)
         out = sp.check_output(shlex.split(cmd)).decode('utf-8')
         status = dict([line.strip().split('|') for line in out.splitlines()])
+        array = utils.parse_array_status(status)
         for name, job_id in self.job_ids.items():
-            st = status.get(job_id)
+            st = array.get(job_id, status.get(job_id))
             self.status[name] = st
             result.append((name, job_id, st))
         return result
