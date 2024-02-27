@@ -47,3 +47,9 @@ s.visualize(as_ascii=True)
 │ preprocess │ ──▶ │ modelrun │ ──▶ │ postprocess │
 └────────────┘     └──────────┘     └─────────────┘
 ```
+
+# Presentation
+
+I talked about this tool in one of GoeHPCoffee sessions at GWDG. The presentation not only covers a brief overview of slurm's `--dependency` feature but also showcases usage of this package with few examples.
+
+Presentation link: https://pad.gwdg.de/ZVBwU_rPSOih4PWK0B3wMA?view
