@@ -156,9 +156,28 @@ jobs:
 EOF
 ```
 
+If relevant slurm directives are declared in the script files, the above example
+can go back to the super minimal representation and it still works.
+
+
+``` shell
+cat > model.yaml <<EOF
+dependency:
+  modelrun: afterok:preprocess
+  postprocess: afterok:modelrun
+jobs:
+  preprocess: preprocess.sh
+  modelrun: modelrun.sh
+  postprocess: postprocessing.sh
+EOF
+```
+
+
 **TIP**
 
-instead of providing `-f model.yaml` argument to `sworkflow` everytime, an environment varible can be set as follows
+instead of providing `-f model.yaml` argument to `sworkflow` everytime, an
+environment varible can be set as follows
+
 
 ``` shell
 export SFILE=model.yaml
@@ -175,9 +194,23 @@ postprocess  9078469  COMPLETED
 preprocess  9078467  COMPLETED
 ```
 
+# Big Picture
+
+The work-flow to build a simple or a complex task dependency is to just
+concentrate on gradual iterative building of task graph. Associating the task
+names with respective job scripts can be differed as a final step. Just start
+off building partial graph and get a intuitive feeling of the task graph by
+visualizing it (`sworkflow vis`). Once the task dependencies are defined as
+desired, it is also possible to submit the suite even before associating task
+names with the actual job scripts. In this case, a dummy task of `sleeping for 2
+seconds` is triggered for each task. This way, corrections to suite can be made
+if task flow through the graph deviates from users expectation. As a final step,
+define association of task name to job script.
 
 # Presentation
 
-I talked about this tool in one of GoeHPCoffee sessions at GWDG. The presentation not only covers a brief overview of slurm's `--dependency` feature but also showcases usage of this package with few examples.
+I talked about this tool in one of GoeHPCoffee sessions at GWDG. The
+presentation not only covers a brief overview of slurm's `--dependency` feature
+but also showcases usage of this package with few examples.
 
 Presentation link: https://pad.gwdg.de/ZVBwU_rPSOih4PWK0B3wMA?view
