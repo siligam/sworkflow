@@ -14,6 +14,22 @@ A different approach is to have separation of concerns by expressing
 dependencies between tasks as a separate python dictionary mapping and tasks to
 run as separate python dictionary mapping.
 
+# Installation
+
+clone the repository
+
+``` shell
+git clone https://github.com/siligam/sworkflow.git
+cd sworkflow
+```
+
+Install the package using conda
+
+``` shell
+conda env create -f environment.yaml -n sworkflow
+pip install .
+```
+
 # Usage
 
 consider the follow example:
