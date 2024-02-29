@@ -207,6 +207,54 @@ seconds` is triggered for each task. This way, corrections to suite can be made
 if task flow through the graph deviates from users expectation. As a final step,
 define association of task name to job script.
 
+For instance, consider building a task graph which branches and
+merges. Conceptually this is formulated as a particular task runs only after 2
+previous tasks completes. Those 2 previous tasks run only if a task before those
+2 tasks completes. To illustrate this, look at the following yaml file
+
+``` shell
+cat > branch_merge.yaml <<EOF
+dependency:
+  E: afterok:D
+  D: after:B,afterany:C
+  B: afterok:A
+  C: afterok:A
+EOF
+```
+
+Here, task `E` depends on `D` to complete but `D` depends on both `B` and `C` to
+complete. Tasks `B` and `C` run only when task `A` completes. It is possible to
+visualize this suite in its current state as follows
+
+``` shell
+sworkflow -f branch_merge.yaml vis
+┌───┐     ┌───┐     ┌───┐     ┌───┐
+│ A │ ──▶ │ B │ ──▶ │ D │ ──▶ │ E │
+└───┘     └───┘     └───┘     └───┘
+  │                   ▲
+  │                   │
+  ▼                   │
+┌───┐                 │
+│ C │ ────────────────┘
+└───┘
+```
+
+change the orientation of the graph if it improves understanding of task flow as
+follows
+
+``` shell
+sworkflow -f branch_merge.yaml vis --rankdir left
+                              ┌───┐
+            ┌──────────────── │ C │
+            │                 └───┘
+            │                   ▲
+            │                   │
+            ▼                   │
+┌───┐     ┌───┐     ┌───┐     ┌───┐
+│ E │ ◀── │ D │ ◀── │ B │ ◀── │ A │
+└───┘     └───┘     └───┘     └───┘
+```
+
 # Presentation
 
 I talked about this tool in one of GoeHPCoffee sessions at GWDG. The
