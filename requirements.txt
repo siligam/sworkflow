@@ -1,6 +1,6 @@
 setuptools
 pyyaml
 graphviz
-python>=3.9
+graphlib_backport; python_version < "3.9.0"
 requests
 click
