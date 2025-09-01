@@ -1,0 +1,8 @@
+dependency:
+  train: afterok:preprocess
+  postprocess: afterok:train
+
+jobs:
+  preprocess: sbatch examples/minimal/preprocess.sh
+  train: sbatch examples/minimal/train.sh
+  postprocess: sbatch examples/minimal/postprocess.sh

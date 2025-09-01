@@ -1,265 +1,354 @@
 # sworkflow
 
-A flexible work-flow for scripting job dependencies in slurm.
+A lightweight Python toolkit for composing, visualizing, and submitting **Slurm job workflows** with complex dependencies.
 
-A typical approach for defining dependencies between tasks is to capture the
-JOB\_ID of the previously submitted job and use it in the next job submission in
-order to make the latter as a dependent of the previous job. The same process is
-repeated for further dependent jobs down the lane. The 2 actions that are
-intertwined in this approach are ordering of jobs and managing of JOB\_ID's. For
-fewer jobs this is manageable but as the larger job, soon it might become a bit
-complicated to follow the dependencies.
+Instead of writing fragile Bash scripts with nested `sbatch --dependency` calls, `sworkflow` lets you
+**declare dependencies** cleanly in Python or YAML, visualize them as a graph, and submit jobs in the
+correct order.
 
-A different approach is to have separation of concerns by expressing
-dependencies between tasks as a separate python dictionary mapping and tasks to
-run as separate python dictionary mapping.
+## ❓ Why sworkflow?
 
-# Installation
+Traditional Bash or “Python-flavored Bash” workflows for Slurm often suffer from:
 
-clone the repository
+- Fragile chaining: manual `sbatch --dependency` wiring, brittle string parsing
+- Hard fan-in/out: merging branches and complex DAGs is error-prone
+- Little validation/visibility: cycles and typos appear late at submit/run time
+- Poor reuse: copy-pasted scripts with ad-hoc parameters
 
-``` shell
-git clone https://github.com/siligam/sworkflow.git
-cd sworkflow
+`sworkflow` addresses this by:
+
+- Declarative DAGs: dependencies as data (YAML/Python), not shell glue
+- Built-in validation: uses `graphlib.TopologicalSorter` to prevent cycles and order jobs
+- Visualization first: render the DAG before submitting
+- Consistent submission: captures job IDs and applies dependency rules uniformly
+- Python API + CLI: use as a library or via simple commands
+
+Quick contrast:
+
+```bash
+# Bash (fragile)
+jid_pre=$(sbatch --parsable preprocess.sh)
+jid_train=$(sbatch --parsable --dependency=afterok:$jid_pre train.sh)
+jid_post=$(sbatch --parsable --dependency=afterok:$jid_train postprocess.sh)
+
+echo "preprocess=$jid_pre train=$jid_train postprocess=$jid_post"
+
+
+# sworkflow (declarative)
+dependency:
+  train: afterok:preprocess
+  postprocess: afterok:train
+jobs:
+  preprocess: preprocess.sh
+  train: train.sh
+  postprocess: postprocess.sh
 ```
 
-Install the package using conda
+## 🧭 Table of Contents
 
-``` shell
+- [sworkflow](#sworkflow)
+  - [❓ Why sworkflow?](#-why-sworkflow)
+  - [🧭 Table of Contents](#-table-of-contents)
+  - [🚀 Features](#-features)
+  - [📦 Prerequisites](#-prerequisites)
+  - [🔧 Installation](#-installation)
+  - [⚡ Quick Start](#-quick-start)
+    - [Example workflow (`workflow.yaml`)](#example-workflow-workflowyaml)
+    - [Submit and visualize](#submit-and-visualize)
+  - [🧾 YAML schema (quick reference)](#-yaml-schema-quick-reference)
+  - [🐍 Python API](#-python-api)
+  - [🌳 Advanced Workflows](#-advanced-workflows)
+    - [Branch and Merge](#branch-and-merge)
+    - [Job Arrays](#job-arrays)
+  - [🔗 Dependency syntax](#-dependency-syntax)
+  - [📊 Visualization](#-visualization)
+  - [❓ CLI Reference](#-cli-reference)
+  - [🧪 Examples](#-examples)
+  - [⚠️ Error Handling](#️-error-handling)
+  - [🛠️ Troubleshooting](#️-troubleshooting)
+  - [🧭 Scope \& limitations](#-scope--limitations)
+  - [📚 Resources](#-resources)
+  - [🤝 Contributing](#-contributing)
+  - [📜 License](#-license)
+
+---
+
+## 🚀 Features
+
+- **Declarative workflow definition** – express dependencies in a dictionary or YAML file
+- **Visualization** – generate ASCII or graph-based DAGs before submission
+- **Python API & CLI** – use as a library or standalone tool
+- **Safer workflows** – prevents dependency cycles, ensures correct ordering
+- **Config-driven** – define jobs in YAML for reuse and easy editing
+
+---
+
+## 📦 Prerequisites
+
+- Python **3.9+** (uses `graphlib.TopologicalSorter`)
+- A working Slurm environment (`sbatch`, `squeue`, `sacct` available)
+- Optional: [Graphviz](https://graphviz.org) for advanced graph visualization
+
+---
+
+## 🔧 Installation
+
+Clone the repository and install:
+
+```bash
+git clone https://github.com/siligam/sworkflow.git
+cd sworkflow
+
+# Option A: Conda environment
 conda env create -f environment.yaml -n sworkflow
+conda activate sworkflow
+pip install .
+
+# Option B: Virtualenv / system install
+python3 -m venv venv
+source venv/bin/activate
 pip install .
 ```
 
-# Usage
+---
 
-consider the follow example:
-(typical slurm job dependency work-flow commands executed in a shell or via bash script)
+## ⚡ Quick Start
 
-```bash
-jobid_1=$(sbatch --parsable preprocess.sh)
-jobid_2=$(sbatch --parsable --depend=afterok:${jobid_1} modelrun.sh)
-jobid_3=$(sbatch --parsable --depend=afterok:${jobid_2} postprocessing.sh) 
+### Example workflow (`workflow.yaml`)
+
+```yaml
+dependency:
+  train: afterok:preprocess
+  postprocess: afterok:train
+
+jobs:
+  preprocess: preprocess.sh
+  train: train.sh
+  postprocess: postprocess.sh
 ```
 
-This can be written as:
-(python session)
+### Submit and visualize
+
+```bash
+# Visualize workflow
+sworkflow -f workflow.yaml vis
+
+# Submit workflow
+sworkflow -f workflow.yaml submit
+
+# Check job status
+sworkflow -f workflow.yaml status
+```
+
+## 🧾 YAML schema (quick reference)
+
+```yaml
+dependency:        # map[job] -> "<condition>:<dep1>[:<dep2>...]"
+  train: afterok:preprocess
+  eval: afterany:train:postprocess
+
+jobs:              # map[job] -> shell command or path to script
+  preprocess: preprocess.sh
+  train: train.sh
+  postprocess: postprocess.sh
+```
+
+**Note:** If a job value does not include the word `sbatch`, `sworkflow` will automatically prepend
+`sbatch --parsable` and inject the appropriate `--dependency=...` flag based on your `dependency`
+mapping. You may also pass raw sbatch flags directly (e.g., `--array=... --wrap=...`).
+
+---
+
+## 🐍 Python API
+
+Define workflows directly in Python:
 
 ```python
 import sworkflow
 
-dep = {
-    "modelrun": "afterok:preprocess",
-    "postprocess": "afterok:modelrun",
+dependency = {
+    "train": "afterok:preprocess",
+    "postprocess": "afterok:train",
 }
 
-tasks = {
+jobs = {
     "preprocess": "preprocess.sh",
-    "modelrun": "sbatch modelrun.sh",
-    "postprocess": "sbatch postprocessing.sh",
+    "train": "train.sh",
+    "postprocess": "postprocess.sh",
 }
 
-s = sworkflow.Suite(dep, tasks)
-s.submit()
-s.visualize(as_ascii=True)
+suite = sworkflow.Suite(dependency, jobs)
 
-┌────────────┐     ┌──────────┐     ┌─────────────┐
-│ preprocess │ ──▶ │ modelrun │ ──▶ │ postprocess │
-└────────────┘     └──────────┘     └─────────────┘
+suite.visualize(as_ascii=True)
+suite.submit()
 ```
 
-**cli**
+Output:
 
-create a yaml file with task dependencies
+```text
+preprocess → train → postprocess
+```
 
-``` shell
-cat > model.yaml <<EOF
+---
+
+## 🌳 Advanced Workflows
+
+### Branch and Merge
+
+```yaml
 dependency:
-  modelrun: afterok:preprocess
-  postprocess: afterok:modelrun
-jobs:
-  preprocess: preprocess.sh
-  modelrun: modelrun.sh
-  postprocess: postprocessing.sh
-EOF
-```
-
-visualize the suite
-
-``` shell
-sworkflow -f model.yaml vis
-┌────────────┐     ┌──────────┐     ┌─────────────┐
-│ preprocess │ ──▶ │ modelrun │ ──▶ │ postprocess │
-└────────────┘     └──────────┘     └─────────────┘
-```
-
-submit suite to slurm. Upon submission, each of the tasks gets assigned slurm job-ids
-
-``` shell
-sworkflow -f model.yaml submit
-{'modelrun': '9078434', 'postprocess': '9078435', 'preprocess': '9078433'}
-```
-
-If desired, this can be verified using the `squeue` command as follows
-
-``` shell
-squeue --me
-             JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)
-           9078433    shared     wrap  a270243 CG       0:04      1 l40000
-           9078434    shared     wrap  a270243 PD       0:00      1 (Dependency)
-           9078435    shared     wrap  a270243 PD       0:00      1 (Dependency)
-```
-
-job status can be tracked with `sworkflow` as follows
-
-``` shell
-sworkflow -f model.yaml vis
-┌──────────────────────────────┐     ┌──────────────────────────┐     ┌─────────────────────────────┐
-│ preprocess 9078433 COMPLETED │ ──▶ │ modelrun 9078434 RUNNING │ ──▶ │ postprocess 9078435 PENDING │
-└──────────────────────────────┘     └──────────────────────────┘     └─────────────────────────────┘
-```
-
-The `vis` command can be repeated any number of times to get the current activate status of the job
-
-``` shell
-sworkflow -f model.yaml vis
-┌──────────────────────────────┐     ┌────────────────────────────┐     ┌───────────────────────────────┐
-│ preprocess 9078433 COMPLETED │ ──▶ │ modelrun 9078434 COMPLETED │ ──▶ │ postprocess 9078435 COMPLETED │
-└──────────────────────────────┘     └────────────────────────────┘     └───────────────────────────────┘
-```
-
-The `status` command also provides the same information without visualization
-
-``` shell
-sworkflow -f model.yaml status
-modelrun  9078434  COMPLETED
-postprocess  9078435  COMPLETED
-preprocess  9078433  COMPLETED
-```
-
-**NOTE**
-
-In `model.yaml` job description for each task is written in super minimal
-way. Job submission may fail if some of the slurm directives like `account` and
-`partition` are missing.
-
-Here is a more concrete example of yaml file including those details
-
-``` shell
-cat > model.yaml <<EOF
-dependency:
-  modelrun: afterok:preprocess
-  postprocess: afterok:modelrun
-jobs:
-  preprocess: sbatch -A ab0246 -p shared preprocess.sh
-  modelrun: sbatch -A ab0246 -p compute modelrun.sh
-  postprocess: sbatch -A ab0246 -p shared postprocessing.sh
-EOF
-```
-
-If relevant slurm directives are declared in the script files, the above example
-can go back to the super minimal representation and it still works.
-
-
-``` shell
-cat > model.yaml <<EOF
-dependency:
-  modelrun: afterok:preprocess
-  postprocess: afterok:modelrun
-jobs:
-  preprocess: preprocess.sh
-  modelrun: modelrun.sh
-  postprocess: postprocessing.sh
-EOF
-```
-
-
-**TIP**
-
-instead of providing `-f model.yaml` argument to `sworkflow` everytime, an
-environment varible can be set as follows
-
-
-``` shell
-export SFILE=model.yaml
-```
-
-Having done that, `sworkflow` commands become less cluttering as follows
-
-``` shell
-sworkflow status
-suite definition: model.yaml
-
-modelrun  9078468  COMPLETED
-postprocess  9078469  COMPLETED
-preprocess  9078467  COMPLETED
-```
-
-# Big Picture
-
-The work-flow to build a simple or a complex task dependency is to just
-concentrate on gradual iterative building of task graph. Associating the task
-names with respective job scripts can be differed as a final step. Just start
-off building partial graph and get a intuitive feeling of the task graph by
-visualizing it (`sworkflow vis`). Once the task dependencies are defined as
-desired, it is also possible to submit the suite even before associating task
-names with the actual job scripts. In this case, a dummy task of `sleeping for 2
-seconds` is triggered for each task. This way, corrections to suite can be made
-if task flow through the graph deviates from users expectation. As a final step,
-define association of task name to job script.
-
-For instance, consider building a task graph which branches and
-merges. Conceptually this is formulated as a particular task runs only after 2
-previous tasks completes. Those 2 previous tasks run only if a task before those
-2 tasks completes. To illustrate this, look at the following yaml file
-
-``` shell
-cat > branch_merge.yaml <<EOF
-dependency:
-  E: afterok:D
-  D: after:B,afterany:C
   B: afterok:A
   C: afterok:A
-EOF
+  D: afterok:B:C
+  E: afterok:D
+
+jobs:
+  A: A.sh
+  B: B.sh
+  C: C.sh
+  D: D.sh
+  E: E.sh
 ```
 
-Here, task `E` depends on `D` to complete but `D` depends on both `B` and `C` to
-complete. Tasks `B` and `C` run only when task `A` completes. It is possible to
-visualize this suite in its current state as follows
+This produces:
 
-``` shell
-sworkflow -f branch_merge.yaml vis
-┌───┐     ┌───┐     ┌───┐     ┌───┐
-│ A │ ──▶ │ B │ ──▶ │ D │ ──▶ │ E │
-└───┘     └───┘     └───┘     └───┘
-  │                   ▲
-  │                   │
-  ▼                   │
-┌───┐                 │
-│ C │ ────────────────┘
-└───┘
+```text
+    A
+   / \
+  B   C
+   \ /
+    D
+    |
+    E
 ```
 
-change the orientation of the graph if it improves understanding of task flow as
-follows
+### Job Arrays
 
-``` shell
-sworkflow -f branch_merge.yaml vis --rankdir left
-                              ┌───┐
-            ┌──────────────── │ C │
-            │                 └───┘
-            │                   ▲
-            │                   │
-            ▼                   │
-┌───┐     ┌───┐     ┌───┐     ┌───┐
-│ E │ ◀── │ D │ ◀── │ B │ ◀── │ A │
-└───┘     └───┘     └───┘     └───┘
+```yaml
+dependency:
+  analyze: afterok:array
+
+jobs:
+  array: --array=10,20,30 --wrap='sleep $SLURM_ARRAY_TASK_ID'
+  analyze: analyze.sh
 ```
 
-# Presentation
+## 🔗 Dependency syntax
 
-I gave talk about this tool (in its early development stage) in one of
-GoeHPCoffee sessions at GWDG. The presentation covers a brief overview of
-slurm's `--dependency` feature and also showcases usage of this package with few
-examples.
+- Conditions: `afterok`, `afterany`, `afternotok`
+- Multiple predecessors are colon-separated, e.g. `afterok:B:C` means run after B and C succeed
+- All referenced predecessors must be defined under `jobs`
+- Example:
 
-Presentation link: https://pad.gwdg.de/ZVBwU_rPSOih4PWK0B3wMA?view
+```yaml
+dependency:
+  D: afterok:B:C
+jobs:
+  B: sbatch B.sh
+  C: sbatch C.sh
+  D: sbatch D.sh
+```
+
+---
+
+## 📊 Visualization
+
+`sworkflow` can render ASCII or Graphviz diagrams.
+
+```bash
+sworkflow -f workflow.yaml vis
+```
+
+Output:
+
+```text
+preprocess
+   |
+ train
+   |
+postprocess
+```
+
+---
+
+## ❓ CLI Reference
+
+- `vis` – visualize workflow
+- `submit` – submit jobs with dependencies
+- `status` – check current job states
+
+You can set a default workflow file:
+
+```bash
+export SFILE=workflow.yaml
+sworkflow vis
+```
+
+---
+
+## 🧪 Examples
+
+See `examples/minimal/` for a minimal runnable setup:
+
+- `examples/minimal/workflow.yaml` – declarative DAG
+- `examples/minimal/preprocess.sh`, `examples/minimal/train.sh`, `examples/minimal/postprocess.sh` – sample jobs
+
+Run locally (requires Slurm):
+
+```bash
+export SFILE=examples/minimal/workflow.yaml
+sworkflow vis
+sworkflow submit
+```
+
+Note: make scripts executable first:
+
+```bash
+chmod +x examples/minimal/*.sh
+```
+
+---
+
+## ⚠️ Error Handling
+
+- Dependencies are resolved using `graphlib.TopologicalSorter`, preventing cycles
+- Jobs will only run if their dependency conditions (`afterok`, `afterany`, `afternotok`) are satisfied
+- Use `sworkflow status` to monitor running workflows
+
+## 🛠️ Troubleshooting
+
+- `command not found: sbatch` – ensure Slurm is installed/loaded and on your PATH (e.g., `module load slurm`)
+- Graphviz visualization fails – install `graphviz` and ensure `dot` is on PATH
+- Jobs stuck in PENDING – check partition/account/QA constraints and your
+  `sbatch` resource flags (`--time`, `--mem`, `--account`, etc.)
+- `status` shows nothing – confirm `sacct` is enabled at your site and you have permission to query accounting data
+
+## 🧭 Scope & limitations
+
+- Designed for Slurm; requires `sbatch`/`squeue`/`sacct`
+- No built-in retries/backoff beyond what you script in your job commands
+- Not a full workflow engine (no caching, scheduling, or cross-cluster orchestration)
+- `status` relies on Slurm accounting and may be subject to site-specific retention/latency
+
+---
+
+## 📚 Resources
+
+- [Slurm job dependencies documentation](https://slurm.schedmd.com/sbatch.html#OPT_dependency)
+- Presentation: [GoeHPCoffee — Workflow management with sworkflow](https://pad.gwdg.de/s/UYOiCAkUN)
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome!
+
+- Fork the repo and create a feature branch
+- Add tests or examples if applicable
+- Submit a pull request with a clear description
+
+---
+
+## 📜 License
+
+MIT License. See [LICENSE](LICENSE) for details.
