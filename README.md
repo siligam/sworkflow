@@ -25,16 +25,19 @@ Traditional Bash or “Python-flavored Bash” workflows for Slurm often suffer 
 
 Quick contrast:
 
+**Bash (fragile):**
+
 ```bash
-# Bash (fragile)
 jid_pre=$(sbatch --parsable preprocess.sh)
 jid_train=$(sbatch --parsable --dependency=afterok:$jid_pre train.sh)
 jid_post=$(sbatch --parsable --dependency=afterok:$jid_train postprocess.sh)
 
 echo "preprocess=$jid_pre train=$jid_train postprocess=$jid_post"
+```
 
+**sworkflow (declarative):**
 
-# sworkflow (declarative)
+```yaml
 dependency:
   train: afterok:preprocess
   postprocess: afterok:train
@@ -130,13 +133,16 @@ jobs:
 ### Submit and visualize
 
 ```bash
-# Visualize workflow
+# Visualize the dependency graph
 sworkflow -f workflow.yaml vis
 
-# Submit workflow
+# Dry-run first to verify the generated sbatch commands
+sworkflow -f workflow.yaml submit --dry-run
+
+# Submit for real — job IDs are saved back to workflow.yaml
 sworkflow -f workflow.yaml submit
 
-# Check job status
+# Check job status (reads saved job IDs from workflow.yaml)
 sworkflow -f workflow.yaml status
 ```
 
@@ -180,13 +186,15 @@ jobs = {
 suite = sworkflow.Suite(dependency, jobs)
 
 suite.visualize(as_ascii=True)
-suite.submit()
+suite.submit()           # submits jobs; saves job IDs to submit.yaml
+suite.update_status()    # queries sacct and populates suite.status
 ```
 
-Output:
+After `submit()`, job IDs are persisted to a YAML file (defaults to `submit.yaml`, or the file the suite was loaded from). You can reload a previously submitted workflow to check status:
 
-```text
-preprocess → train → postprocess
+```python
+suite = sworkflow.Suite.load_yaml("submit.yaml")
+suite.update_status()
 ```
 
 ---
@@ -235,10 +243,22 @@ jobs:
 
 ## 🔗 Dependency syntax
 
-- Conditions: `afterok`, `afterany`, `afternotok`
-- Multiple predecessors are colon-separated, e.g. `afterok:B:C` means run after B and C succeed
-- All referenced predecessors must be defined under `jobs`
-- Example:
+All standard Slurm dependency conditions are supported:
+
+| Condition | Meaning |
+|-----------|---------|
+| `afterok` | Run after all predecessors complete successfully |
+| `afterany` | Run after all predecessors finish (any exit status) |
+| `afternotok` | Run after any predecessor fails |
+| `after` | Run after predecessors start (no status check) |
+| `aftercorr` | Run after corresponding array tasks complete |
+| `afterburstbuffer` | Run after burst buffer stage-out completes |
+| `singleton` | Run once no other job with the same name is running |
+
+Multiple predecessors are colon-separated: `afterok:B:C` means run after both B and C succeed.
+All referenced predecessors must be defined under `jobs`.
+
+Example:
 
 ```yaml
 dependency:
@@ -273,16 +293,47 @@ postprocess
 
 ## ❓ CLI Reference
 
-- `vis` – visualize workflow
-- `submit` – submit jobs with dependencies
-- `status` – check current job states
-
-You can set a default workflow file:
+All commands accept `-f/--filename` or the `SFILE` environment variable to specify the workflow file.
 
 ```bash
-export SFILE=workflow.yaml
-sworkflow vis
+export SFILE=workflow.yaml   # set once, all commands use it
 ```
+
+### `sworkflow vis`
+
+Render the dependency graph as ASCII art.
+
+```bash
+sworkflow -f workflow.yaml vis [--rankdir LR|RL|TB|BT]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--rankdir` | `LR` | Graph layout direction. Aliases accepted: `right`/`left`/`down`/`up` |
+
+### `sworkflow submit`
+
+Submit all jobs to Slurm in dependency order. Job IDs are written back to the YAML file on completion so `status` can find them.
+
+```bash
+sworkflow -f workflow.yaml submit [--dry-run]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Print the sbatch commands without executing them; uses fake job IDs |
+
+### `sworkflow status`
+
+Query Slurm for the current state of all submitted jobs.
+
+```bash
+sworkflow -f workflow.yaml status [--vis]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--vis` | Overlay job statuses on the dependency graph after printing the table |
 
 ---
 
