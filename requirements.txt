@@ -5,3 +5,6 @@ graphlib_backport; python_version < "3.9.0"
 requests
 click
 pytest
+mkdocs
+mkdocs-material
+mkdocstrings[python]
