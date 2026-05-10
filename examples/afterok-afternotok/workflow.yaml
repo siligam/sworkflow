@@ -1,0 +1,24 @@
+# Exclusive branching: afterok vs afternotok
+#
+# B depends on A succeeding.
+# C runs only if B succeeds    (afterok).
+# D runs only if B fails       (afternotok).
+#
+# Because C and D are mutually exclusive, whichever branch is not triggered
+# will remain in the Slurm queue with status DependencyNeverSatisfied.
+# You must cancel it manually: scancel <job_id>
+#
+# Demonstrates:
+#   - afterok / afternotok as mutually exclusive conditions
+#   - the DependencyNeverSatisfied gotcha and how to handle it
+
+dependency:
+  B: afterok:A
+  C: afterok:B
+  D: afternotok:B
+
+jobs:
+  A: --wrap='sleep 2'
+  B: --wrap='sleep 2'
+  C: --wrap='sleep 2'
+  D: --wrap='sleep 2'

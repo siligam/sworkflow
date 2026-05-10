@@ -1,0 +1,23 @@
+# Branch-and-merge (diamond DAG): A -> {B, C} -> D -> E
+#
+# A fans out to B and C in parallel.
+# D waits for both B and C to succeed before starting.
+# E runs after D completes.
+#
+# Demonstrates:
+#   - fan-out (one job triggers multiple parallel jobs)
+#   - fan-in  (one job waits on multiple predecessors)
+#   - mixed job command styles: inline --wrap, plain script, script with sbatch flags
+
+dependency:
+  B: afterok:A
+  C: afterok:A
+  D: afterok:B:C
+  E: afterok:D
+
+jobs:
+  A: --wrap='sleep 2'
+  B: --wrap='sleep 2'
+  C: --wrap='sleep 2'
+  D: examples/branch-merge/D.sh
+  E: --mem=40G examples/branch-merge/E.sh
