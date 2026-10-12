@@ -1,6 +1,7 @@
 # CLI Reference
 
-All commands accept `-f/--filename` or the `SFILE` environment variable to specify the workflow file.
+All commands require `-f/--filename` or the `SFILE` environment variable to specify the workflow file.
+Problems such as a missing file, an unknown job name or a dependency cycle are reported as a one-line error (exit code 1) instead of a traceback.
 
 ```bash
 export SFILE=workflow.yaml   # set once, all commands use it
@@ -10,7 +11,7 @@ export SFILE=workflow.yaml   # set once, all commands use it
 
 ## `sworkflow vis`
 
-Render the dependency graph as ASCII art.
+Print the dependency graph as plain text. The text is rendered locally; each job is indented by its depth and lists its predecessors.
 
 ```bash
 sworkflow -f workflow.yaml vis [--rankdir LR|RL|TB|BT]
@@ -18,13 +19,21 @@ sworkflow -f workflow.yaml vis [--rankdir LR|RL|TB|BT]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--rankdir` | `LR` | Graph layout direction. Aliases accepted: `right`/`left`/`down`/`up` and `top`/`bottom` |
+| `--rankdir` | `LR` | Graph layout direction for Graphviz output (the text view ignores it). Aliases accepted: `right`/`left`/`down`/`up` |
 
 **Example:**
 
 ```bash
-sworkflow -f workflow.yaml vis --rankdir TB
+sworkflow -f workflow.yaml vis
 ```
+
+```
+preprocess
+    train  <- preprocess
+        postprocess  <- train
+```
+
+For a Graphviz PDF use `Suite.visualize(as_ascii=False)` from Python (requires the `dot` executable); `--rankdir` applies there.
 
 ---
 
@@ -41,6 +50,8 @@ sworkflow -f workflow.yaml submit [--dry-run] [--force]
 | `--dry-run` | Print the sbatch commands without executing them; uses fake job IDs and never writes the file |
 | `--force` | Submit even if the file already has `job_ids` (refused by default to avoid duplicate jobs) |
 
+If a later `sbatch` call fails, the IDs of the jobs already submitted are still saved to the file before the error is reported.
+
 **Recommended workflow:**
 
 ```bash
@@ -53,7 +64,7 @@ sworkflow -f workflow.yaml submit         # 3. submit for real
 
 ## `sworkflow status`
 
-Query Slurm for the current state of all submitted jobs.
+Query Slurm for the current state of all submitted jobs. A job that `sacct` does not know (for example because its accounting record has expired) is shown as `UNKNOWN`.
 
 ```bash
 sworkflow -f workflow.yaml status [--vis]
@@ -81,6 +92,17 @@ All standard Slurm dependency conditions are supported:
 
 Multiple predecessors are colon-separated: `afterok:B:C` means run after **both** B and C succeed.
 
+Every name used under `dependency` must also be defined under `jobs`; an unknown name is an error. Avoid names that end in `_<number>` (read as a job-array task) and names made only of digits.
+
+### Existing Slurm jobs
+
+An all-digit token refers to a job that is already in Slurm and is passed through unchanged:
+
+```yaml
+dependency:
+  D: afterok:123456:C   # wait for existing job 123456 and for workflow job C
+```
+
 ### Minute-offset syntax
 
 Append `+n` to delay a dependency by `n` minutes after the predecessor starts:
@@ -96,7 +118,14 @@ Combine multiple conditions with a comma:
 
 ```yaml
 dependency:
-  D: afterok:A,afternotok:B   # D runs if A succeeds OR B fails
+  D: afterok:A,afternotok:B   # D runs only if A succeeds AND B fails
+```
+
+Use `?` instead of `,` when any one condition is enough:
+
+```yaml
+dependency:
+  D: afterok:A?afterok:B      # D runs if A OR B succeeds
 ```
 
 ---
@@ -108,5 +137,7 @@ dependency:
 | `command not found: sbatch` | Ensure Slurm is loaded: `module load slurm` |
 | Graphviz visualization fails | Install `graphviz` and ensure `dot` is on PATH |
 | Jobs stuck in PENDING | Check partition/account constraints; verify `--time`, `--mem`, `--account` flags |
+| `Error: jobs not defined in 'jobs': ...` | A name in `dependency` has no entry under `jobs`; check for a typo |
+| `Error: workflow already has job_ids` | The file was submitted before; use `submit --force` to submit it again (earlier jobs keep running) |
 | `status` shows nothing | Confirm `sacct` is enabled and you have permission to query accounting data |
 | Branch stuck with `DependencyNeverSatisfied` | Cancel the unneeded branch: `scancel <job_id>` |

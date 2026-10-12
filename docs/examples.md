@@ -95,6 +95,9 @@ dependency:
 
 jobs:
   array: --array=5,10,15,20,25 --wrap='sleep $SLURM_ARRAY_TASK_ID'
+  B: --wrap='sleep 2'
+  C: --wrap='sleep 2'
+  D: --wrap='sleep 2'
 ```
 
 **What this demonstrates:**
@@ -105,8 +108,8 @@ jobs:
 | `C` | `afterok:array` | Waits until all 5 array tasks complete successfully |
 | `D` | `after:B+1` | Starts 1 minute after `B` starts (`+n` = minute offset) |
 
-`B`, `C`, and `D` have no entry under `jobs`, so they use the default command:
-`sbatch --wrap="sleep 2"`.
+Every job named under `dependency` must be defined under `jobs`, so `B`, `C` and `D`
+each get a trivial `--wrap='sleep 2'` command here.
 
 **Graph:**
 
