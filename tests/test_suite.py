@@ -298,3 +298,112 @@ class TestUpdateStatus:
                 s.update_status()
 
         assert s.status["preprocess"] == "PENDING"
+
+
+# ---------------------------------------------------------------------------
+# regressions
+# ---------------------------------------------------------------------------
+
+def _counter_sp():
+    n = {"n": 0}
+
+    def fake(cmd, *a, **kw):
+        n["n"] += 1
+        return f"{n['n']}00".encode()
+
+    return fake
+
+
+class TestJobValidation:
+    def test_typo_in_dependency_raises(self):
+        s = Suite(
+            dependency={"b": "afterok:prepocess"},
+            jobs={"preprocess": "p.sh", "b": "b.sh"},
+        )
+        with pytest.raises(ValueError, match="prepocess"):
+            s.prepare_jobs()
+
+    def test_typo_submits_nothing(self, tmp_path):
+        s = Suite(
+            dependency={"b": "afterok:prepocess"},
+            jobs={"preprocess": "p.sh", "b": "b.sh"},
+        )
+        s.filename = str(tmp_path / "out.yaml")
+        with patch("subprocess.check_output") as sp:
+            with pytest.raises(ValueError):
+                s.submit()
+        sp.assert_not_called()
+
+    def test_independent_and_singleton_jobs_submitted(self, tmp_path):
+        s = Suite(
+            dependency={"b": "afterok:a", "d": "singleton"},
+            jobs={"a": "a.sh", "b": "b.sh", "c": "c.sh", "d": "d.sh"},
+        )
+        s.filename = str(tmp_path / "out.yaml")
+        with patch("subprocess.check_output", side_effect=_counter_sp()):
+            ids = s.submit()
+        assert set(ids) == {"a", "b", "c", "d"}
+
+    def test_underscored_names_submit_with_dependency(self, tmp_path, capsys):
+        s = Suite(
+            dependency={"post_process": "afterok:pre_process"},
+            jobs={"pre_process": "a.sh", "post_process": "b.sh"},
+        )
+        s.submit(dry_run=True)
+        out = capsys.readouterr().out
+        dep = f"--dependency=afterok:{s.job_ids['pre_process']}"
+        assert dep in out
+
+
+class TestSubmitSafety:
+    def test_dry_run_does_not_write_file(self, tmp_path):
+        path = tmp_path / "wf.yaml"
+        path.write_text("# mine\ndependency:\n  b: afterok:a\n")
+        s = Suite.load_yaml(str(path))
+        s.submit(dry_run=True)
+        assert path.read_text() == "# mine\ndependency:\n  b: afterok:a\n"
+
+    def test_partial_job_ids_saved_on_failure(self, tmp_path):
+        path = tmp_path / "out.yaml"
+        s = Suite(dependency=SIMPLE_DEP, jobs=SIMPLE_JOBS)
+        s.filename = str(path)
+        ok = _counter_sp()
+        calls = {"n": 0}
+
+        def flaky(cmd, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise RuntimeError("sbatch failed")
+            return ok(cmd)
+
+        with patch("subprocess.check_output", side_effect=flaky):
+            with pytest.raises(RuntimeError):
+                s.submit()
+        saved = yaml.safe_load(path.read_text())["job_ids"]
+        assert set(saved) == {"preprocess", "train"}
+
+    def test_nothing_saved_when_first_job_fails(self, tmp_path):
+        path = tmp_path / "out.yaml"
+        s = Suite(dependency=SIMPLE_DEP, jobs=SIMPLE_JOBS)
+        s.filename = str(path)
+        with patch("subprocess.check_output", side_effect=RuntimeError):
+            with pytest.raises(RuntimeError):
+                s.submit()
+        assert not path.exists()
+
+    def test_braces_in_user_command_untouched(self, tmp_path):
+        s = Suite(
+            dependency={"b": "afterok:a"},
+            jobs={"a": "a.sh", "b": "sbatch --wrap='echo {1..3} {} ${HOME}'"},
+        )
+        s.filename = str(tmp_path / "out.yaml")
+        seen = []
+
+        def fake(cmd, *a, **kw):
+            seen.append(cmd)
+            return b"7"
+
+        with patch("subprocess.check_output", side_effect=fake):
+            s.submit()
+        assert "--wrap=echo {1..3} {} ${HOME}" in seen[1]
+        assert "--dependency=afterok:7" in seen[1]

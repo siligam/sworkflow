@@ -123,12 +123,21 @@ class Suite:
           resolved to real Slurm IDs at submission time.
 
         Results are stored in :attr:`job_template`. Jobs not present in
-        :attr:`jobs` receive the default command ``sbatch --wrap="sleep 2"``.
+        :attr:`jobs` receive the default command ``sbatch --wrap="sleep 2"``
+        only when :attr:`jobs` is empty (a quick demo); otherwise a job named
+        in the dependencies but missing from :attr:`jobs` is an error.
+
+        Raises:
+            ValueError: If :attr:`jobs` is non-empty and a job named in
+                :attr:`dependency` has no entry in it (usually a typo).
         """
         dependency = self.dependency
-        ordering = utils.task_ordering(dependency)
+        ordering = utils.task_ordering(dependency, self.jobs)
         dependency_placeholder = utils.as_placeholder(dependency)
         jobs = self.jobs
+        missing = [n for n in ordering if jobs and n not in jobs]
+        if missing:
+            raise ValueError(f"jobs not defined in 'jobs': {', '.join(missing)}")
         result = {}
         for task_name in ordering:
             job = jobs.get(task_name, default_task)
@@ -151,7 +160,9 @@ class Suite:
         substituting captured job IDs into dependency placeholders before each
         ``sbatch`` call. The resulting job IDs are written back to
         :attr:`job_ids` and the workflow is saved to :attr:`filename` (defaulting
-        to ``"submit.yaml"``).
+        to ``"submit.yaml"``). If a later ``sbatch`` call fails, the IDs of the
+        jobs already submitted are still saved before the error propagates. A
+        dry run never writes the file.
 
         Args:
             dry_run: When ``True``, commands are printed to stdout instead of
@@ -165,19 +176,28 @@ class Suite:
         func = (sp.check_output, utils.check_output)[dry_run]
         self.filename = self.filename or "submit.yaml"
         filename = self.filename
-        ordering = utils.task_ordering(self.dependency)
+        ordering = utils.task_ordering(self.dependency, self.jobs)
         self.prepare_jobs()
-        job_template = self.job_template
         job_ids = self.job_ids
-        for task_name in ordering:
-            job = job_template.get(task_name)
-            job = job.format_map(utils.Default(job_ids))
-            if dry_run:
-                job_id = func(shlex.split(job), task_name=task_name)
-            else:
-                job_id = func(shlex.split(job))
-            job_ids[task_name] = job_id.decode("utf-8").strip()
-        self.save_yaml(filename)
+        submitted = 0
+        try:
+            for task_name in ordering:
+                fill = utils.Default(job_ids)
+                # only the dependency flag holds placeholders; braces elsewhere
+                # in the user's command must be left alone
+                cmd = [
+                    p.format_map(fill) if p.startswith("--dependency=") else p
+                    for p in shlex.split(self.job_template[task_name])
+                ]
+                if dry_run:
+                    job_id = func(cmd, task_name=task_name)
+                else:
+                    job_id = func(cmd)
+                job_ids[task_name] = job_id.decode("utf-8").strip()
+                submitted += 1
+        finally:
+            if submitted and not dry_run:
+                self.save_yaml(filename)
         return self.job_ids
 
     def graph(self, rankdir="LR"):
@@ -197,7 +217,7 @@ class Suite:
         """
         self.update_status()
         d = utils.as_dict(self.dependency)
-        ordering = utils.task_ordering(self.dependency)
+        ordering = utils.task_ordering(self.dependency, self.jobs)
         g = graphviz.Digraph()
         g.graph_attr["rankdir"] = rankdir
         for name in ordering:

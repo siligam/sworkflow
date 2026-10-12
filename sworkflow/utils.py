@@ -17,6 +17,19 @@ keywords = {
 }
 
 
+_SUFFIX = re.compile(r"^(.+?)([+_]\d+)$")
+
+
+def _split_suffix(name):
+    """Split ``jobA_10`` / ``jobA+1`` into ``("jobA", "_10")`` / ``("jobA", "+1")``.
+
+    Only a numeric ``_taskid`` or ``+offset`` counts as a Slurm array suffix, so
+    names such as ``post_process`` are returned unchanged with an empty suffix.
+    """
+    m = _SUFFIX.match(name)
+    return m.groups() if m else (name, "")
+
+
 def as_dict(dependency):
     """Return a predecessor-list mapping stripped of Slurm dependency keywords.
 
@@ -38,15 +51,11 @@ def as_dict(dependency):
     names = defaultdict(list)
     pattern = re.compile("[,?:]")
     for name, value in dependency.items():
-        values = pattern.split(value)
-        for val in values:
+        names[name]  # keep jobs without predecessors (e.g. ``singleton``)
+        for val in pattern.split(value):
             if val in keywords:
                 continue
-            elif "+" in val:
-                val, _ = val.split("+")
-            elif "_" in val:
-                val, _ = val.split("_")
-            names[name].append(val)
+            names[name].append(_split_suffix(val)[0])
     return dict(names)
 
 
@@ -75,11 +84,7 @@ def as_tuple(dependency):
             _type = next(items)
             names[name].append(_type)
             for item in items:
-                if "+" in item:
-                    item, _ = item.split("+")
-                elif "_" in item:
-                    item, _ = item.split("_")
-                names[name].append(item)
+                names[name].append(_split_suffix(item)[0])
     return dict(names)
 
 
@@ -102,15 +107,8 @@ def _formatted(job_str: str) -> str:
     keyword, *names = job_str.split(":")
     parts = [keyword]
     for name in names:
-        if "+" in name:
-            head, tail = name.split("+")
-            s = f"{{{head}}}+{tail}"
-        elif "_" in name:
-            head, tail = name.split("_")
-            s = f"{{{head}}}_{tail}"
-        else:
-            s = f"{{{name}}}"
-        parts.append(s)
+        head, tail = _split_suffix(name)
+        parts.append(f"{{{head}}}{tail}")
     return ":".join(parts)
 
 
@@ -144,7 +142,7 @@ def as_placeholder(dependency):
     return result
 
 
-def task_ordering(dependency):
+def task_ordering(dependency, jobs=()):
     """Return jobs in a valid submission order respecting all dependencies.
 
     Uses :class:`graphlib.TopologicalSorter` on the predecessor graph produced
@@ -152,6 +150,8 @@ def task_ordering(dependency):
 
     Args:
         dependency: Maps each job name to a Slurm dependency string.
+        jobs: Optional iterable of job names. Any not mentioned in
+            ``dependency`` are included as independent roots.
 
     Returns:
         List of job name strings in topological order.
@@ -160,6 +160,8 @@ def task_ordering(dependency):
         graphlib.CycleError: If the dependency graph contains a cycle.
     """
     d = as_dict(dependency)
+    for name in jobs:
+        d.setdefault(name, [])
     return list(TopologicalSorter(d).static_order())
 
 
