@@ -283,8 +283,12 @@ class Suite:
                 PDF. Has no effect in ASCII mode.
 
         Returns:
-            The :class:`graphviz.Digraph` instance, or ``None`` in ASCII/PDF
-            mode (side-effects only).
+            The :class:`graphviz.Digraph` instance (Jupyter and text mode), or
+            the path of the rendered PDF (``as_ascii=False``).
+
+        Raises:
+            graphviz.ExecutableNotFound: In PDF mode, if the Graphviz ``dot``
+                executable is not installed.
         """
         g = self.graph(rankdir=rankdir)
         if utils.in_jupyter():
@@ -295,7 +299,14 @@ class Suite:
             print(utils.ascii_graph(self.dependency, self.jobs, labels))
             return g
         stem = os.path.splitext(os.path.basename(self.filename or "sworkflow"))[0]
-        g.render(f"{stem}-graph", view=view_pdf, cleanup=True)
+        name = f"{stem}-graph"
+        try:
+            return g.render(name, view=view_pdf, cleanup=True)
+        finally:
+            # graphviz writes the DOT source first and only removes it after a
+            # successful render, so a missing `dot` would leave it behind
+            if os.path.exists(name):
+                os.remove(name)
 
     def update_status(self):
         """Query Slurm for the current state of all submitted jobs.

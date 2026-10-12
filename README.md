@@ -299,8 +299,9 @@ preprocess
         postprocess  <- train
 ```
 
-For a Graphviz diagram use the Python API: `suite.visualize(as_ascii=False)` writes `<workflow-name>-graph.pdf`
-(requires the `dot` executable). `--rankdir` only affects this Graphviz output; the text view ignores it.
+For a Graphviz diagram run `sworkflow -f workflow.yaml vis --pdf`, which writes `<workflow-name>-graph.pdf`
+into the current directory (requires the `dot` executable). `--rankdir` sets the layout direction of the PDF;
+the text view ignores it. From Python use `suite.visualize(as_ascii=False)`.
 
 ---
 
@@ -318,12 +319,13 @@ export SFILE=workflow.yaml   # set once, all commands use it
 Print the dependency graph as plain text.
 
 ```bash
-sworkflow -f workflow.yaml vis [--rankdir LR|RL|TB|BT]
+sworkflow -f workflow.yaml vis [--pdf] [--rankdir LR|RL|TB|BT]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--rankdir` | `LR` | Graph layout direction for Graphviz output (the text view ignores it). Aliases accepted: `right`/`left`/`down`/`up` |
+| `--pdf` | off | Write a Graphviz PDF (`<workflow-name>-graph.pdf`, needs `dot`) instead of printing text |
+| `--rankdir` | `LR` | Graph layout direction for the PDF (the text view ignores it). Aliases accepted: `right`/`left`/`down`/`up` |
 
 ### `sworkflow submit`
 
@@ -388,7 +390,7 @@ chmod +x examples/minimal/*.sh
 ## 🛠️ Troubleshooting
 
 - `command not found: sbatch` – ensure Slurm is installed/loaded and on your PATH (e.g., `module load slurm`)
-- Graphviz visualization fails – install `graphviz` and ensure `dot` is on PATH
+- `vis --pdf` fails with "needs the Graphviz `dot` executable" – install Graphviz and ensure `dot` is on PATH (e.g. `module load graphviz`)
 - Jobs stuck in PENDING – check partition/account/QA constraints and your
   `sbatch` resource flags (`--time`, `--mem`, `--account`, etc.)
 - `Error: jobs not defined in 'jobs': ...` – a name in `dependency` has no entry under `jobs`; check for a typo

@@ -14,12 +14,13 @@ export SFILE=workflow.yaml   # set once, all commands use it
 Print the dependency graph as plain text. The text is rendered locally; each job is indented by its depth and lists its predecessors.
 
 ```bash
-sworkflow -f workflow.yaml vis [--rankdir LR|RL|TB|BT]
+sworkflow -f workflow.yaml vis [--pdf] [--rankdir LR|RL|TB|BT]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--rankdir` | `LR` | Graph layout direction for Graphviz output (the text view ignores it). Aliases accepted: `right`/`left`/`down`/`up` |
+| `--pdf` | off | Write a Graphviz PDF (`<workflow-name>-graph.pdf`, needs `dot`) instead of printing text |
+| `--rankdir` | `LR` | Graph layout direction for the PDF (the text view ignores it). Aliases accepted: `right`/`left`/`down`/`up` |
 
 **Example:**
 
@@ -33,7 +34,13 @@ preprocess
         postprocess  <- train
 ```
 
-For a Graphviz PDF use `Suite.visualize(as_ascii=False)` from Python (requires the `dot` executable); `--rankdir` applies there.
+For a Graphviz PDF, which also honors `--rankdir`:
+
+```bash
+sworkflow -f workflow.yaml vis --pdf --rankdir TB   # writes workflow-graph.pdf
+```
+
+This needs the Graphviz `dot` executable; from Python use `Suite.visualize(as_ascii=False)`.
 
 ---
 
@@ -135,7 +142,7 @@ dependency:
 | Problem | Fix |
 |---------|-----|
 | `command not found: sbatch` | Ensure Slurm is loaded: `module load slurm` |
-| Graphviz visualization fails | Install `graphviz` and ensure `dot` is on PATH |
+| `vis --pdf` fails with "needs the Graphviz `dot` executable" | Install Graphviz and ensure `dot` is on PATH (e.g. `module load graphviz`) |
 | Jobs stuck in PENDING | Check partition/account constraints; verify `--time`, `--mem`, `--account` flags |
 | `Error: jobs not defined in 'jobs': ...` | A name in `dependency` has no entry under `jobs`; check for a typo |
 | `Error: workflow already has job_ids` | The file was submitted before; use `submit --force` to submit it again (earlier jobs keep running) |
