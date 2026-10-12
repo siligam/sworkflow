@@ -275,3 +275,29 @@ class TestOrderingIncludesAllJobs:
         order = task_ordering({"b": "afterok:a"}, jobs=["a", "b", "c"])
         assert set(order) == {"a", "b", "c"}
         assert order.index("a") < order.index("b")
+
+
+class TestExistingSlurmIds:
+    def test_digit_token_is_not_a_job(self):
+        assert as_dict({"b": "afterok:123456"}) == {"b": []}
+        assert as_dict({"b": "afterok:123456_4:a"}) == {"b": ["a"]}
+        assert task_ordering({"b": "afterok:123456"}) == ["b"]
+
+    def test_digit_token_not_a_placeholder(self):
+        assert as_placeholder({"b": "afterok:123456:a"}) == {"b": "afterok:123456:{a}"}
+        assert as_placeholder({"b": "afterok:123456_4"}) == {"b": "afterok:123456_4"}
+
+
+class TestAsciiGraph:
+    def test_layers_and_predecessors(self):
+        from sworkflow.utils import ascii_graph
+        out = ascii_graph({"c": "afterok:a:b", "b": "afterok:a"}, jobs=["z"])
+        lines = out.splitlines()
+        assert "a" in lines
+        assert "    b  <- a" in lines
+        assert "        c  <- a, b" in lines
+        assert "z" in lines
+
+    def test_labels(self):
+        from sworkflow.utils import ascii_graph
+        assert "a 12 RUNNING" in ascii_graph({"b": "afterok:a"}, labels={"a": "a 12 RUNNING"})

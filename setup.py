@@ -18,7 +18,7 @@ setup(
     packages=[
         "sworkflow",
     ],
-    install_requires=["pyyaml", "graphviz", "click", "requests"],
+    install_requires=["pyyaml", "graphviz", "click"],
     extras_require={
         "dev": ["pytest"],
         "docs": ["mkdocs", "mkdocs-material", "mkdocstrings[python]"],

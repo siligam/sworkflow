@@ -222,11 +222,12 @@ class TestSubmit:
             s.submit(dry_run=True)
             mock_sp.assert_not_called()
 
-    def test_dry_run_populates_job_ids(self, tmp_path):
+    def test_dry_run_returns_fake_job_ids_without_storing_them(self, tmp_path):
         s = Suite(dependency=SIMPLE_DEP, jobs=SIMPLE_JOBS)
         s.filename = str(tmp_path / "out.yaml")
-        s.submit(dry_run=True)
-        assert set(s.job_ids.keys()) == {"preprocess", "train", "postprocess"}
+        ids = s.submit(dry_run=True)
+        assert set(ids) == {"preprocess", "train", "postprocess"}
+        assert s.job_ids == {}
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +273,7 @@ class TestUpdateStatus:
 
     def test_returns_empty_when_sacct_missing(self):
         s = make_suite(job_ids={"preprocess": "100"})
-        with patch("subprocess.call", side_effect=FileNotFoundError):
+        with patch("shutil.which", return_value=None):
             result = s.update_status()
         assert result == []
 
@@ -281,7 +282,7 @@ class TestUpdateStatus:
 
         sacct_output = "100|COMPLETED\n200|RUNNING\n"
 
-        with patch("subprocess.call"):
+        with patch("shutil.which", return_value="/usr/bin/sacct"):
             with patch("subprocess.check_output", return_value=sacct_output.encode()):
                 result = s.update_status()
 
@@ -293,7 +294,7 @@ class TestUpdateStatus:
         s = make_suite(job_ids={"preprocess": "100"})
         sacct_output = "100|PENDING\n"
 
-        with patch("subprocess.call"):
+        with patch("shutil.which", return_value="/usr/bin/sacct"):
             with patch("subprocess.check_output", return_value=sacct_output.encode()):
                 s.update_status()
 
@@ -349,9 +350,9 @@ class TestJobValidation:
             dependency={"post_process": "afterok:pre_process"},
             jobs={"pre_process": "a.sh", "post_process": "b.sh"},
         )
-        s.submit(dry_run=True)
+        ids = s.submit(dry_run=True)
         out = capsys.readouterr().out
-        dep = f"--dependency=afterok:{s.job_ids['pre_process']}"
+        dep = f"--dependency=afterok:{ids['pre_process']}"
         assert dep in out
 
 
@@ -407,3 +408,93 @@ class TestSubmitSafety:
             s.submit()
         assert "--wrap=echo {1..3} {} ${HOME}" in seen[1]
         assert "--dependency=afterok:7" in seen[1]
+
+
+# ---------------------------------------------------------------------------
+# regressions: command rewriting, resubmission, status probe, visualization
+# ---------------------------------------------------------------------------
+
+class TestCommandRewrite:
+    def test_flags_go_after_sbatch_when_not_first_token(self):
+        s = Suite({"b": "afterok:a"}, {"a": "a.sh", "b": "env X=1 sbatch b.sh"})
+        s.prepare_jobs()
+        assert s.job_template["b"].startswith(
+            "env X=1 sbatch --parsable '--dependency=afterok:{a}' b.sh"
+        )
+
+    @pytest.mark.parametrize("flag", ["--dependency=afterok:9", "-d afterok:9"])
+    def test_own_dependency_flag_conflicts_with_entry(self, flag):
+        s = Suite({"b": "afterok:a"}, {"a": "a.sh", "b": f"sbatch {flag} b.sh"})
+        with pytest.raises(ValueError, match="own --dependency"):
+            s.prepare_jobs()
+
+    def test_own_dependency_flag_kept_when_no_entry(self):
+        s = Suite({"b": "afterok:a"}, {"a": "sbatch --dependency=afterok:9 a.sh", "b": "b.sh"})
+        s.prepare_jobs()
+        assert s.job_template["a"].count("--dependency") == 1
+
+    def test_existing_slurm_job_id_passed_through(self, tmp_path, capsys):
+        s = Suite({"b": "afterok:123456"}, {"b": "b.sh"})
+        s.submit(dry_run=True)
+        out = capsys.readouterr().out
+        assert "--dependency=afterok:123456" in out
+        assert out.count("sbatch") == 1
+
+
+class TestResubmission:
+    def test_refused_when_job_ids_present(self, tmp_path):
+        s = make_suite(job_ids={"preprocess": "1"})
+        s.filename = str(tmp_path / "out.yaml")
+        with patch("subprocess.check_output") as sp:
+            with pytest.raises(ValueError, match="force"):
+                s.submit()
+        sp.assert_not_called()
+
+    def test_force_replaces_old_ids(self, tmp_path):
+        s = make_suite(job_ids={"preprocess": "1", "stale": "2"})
+        s.filename = str(tmp_path / "out.yaml")
+        with patch("subprocess.check_output", side_effect=_counter_sp()):
+            ids = s.submit(force=True)
+        assert set(ids) == {"preprocess", "train", "postprocess"}
+        assert ids["preprocess"] != "1"
+
+    def test_dry_run_allowed_when_job_ids_present(self):
+        s = make_suite(job_ids={"preprocess": "1"})
+        s.submit(dry_run=True)
+        assert s.job_ids == {"preprocess": "1"}
+
+
+class TestLoadYaml:
+    def test_jobs_only_file(self, tmp_path):
+        path = tmp_path / "w.yaml"
+        path.write_text("jobs:\n  a: a.sh\n")
+        s = Suite.load_yaml(str(path))
+        assert s.dependency == {}
+        assert s.jobs == {"a": "a.sh"}
+
+
+class TestStatusProbe:
+    def test_does_not_run_sacct_to_probe(self):
+        s = make_suite(job_ids={"preprocess": "100"})
+        with patch("shutil.which", return_value="/usr/bin/sacct"):
+            with patch("subprocess.call") as call_, patch(
+                "subprocess.check_output", return_value=b"100|COMPLETED\n"
+            ):
+                s.update_status()
+        call_.assert_not_called()
+
+
+class TestVisualize:
+    def test_ascii_is_local(self, capsys):
+        s = make_suite()
+        with patch.object(s, "update_status"):
+            s.visualize()
+        out = capsys.readouterr().out
+        assert "train  <- preprocess" in out
+
+    def test_pdf_named_after_workflow_file(self):
+        s = make_suite()
+        s.filename = "dir/my_wf.yaml"
+        with patch.object(s, "update_status"), patch("graphviz.Digraph.render") as r:
+            s.visualize(as_ascii=False, view_pdf=False)
+        assert r.call_args.args[0] == "my_wf-graph"

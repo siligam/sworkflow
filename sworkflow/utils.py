@@ -2,7 +2,6 @@ import re
 import yaml
 import shlex
 import random
-import requests
 from collections import defaultdict, Counter
 from graphlib import TopologicalSorter
 
@@ -39,6 +38,8 @@ def as_dict(dependency):
 
     Handles Slurm job array suffixes: ``+offset`` (e.g. ``jobA+1``) and
     ``_taskid`` (e.g. ``jobA_10``) are stripped, leaving only the base name.
+    All-digit tokens (e.g. ``afterok:123456``) are existing Slurm job IDs, not
+    workflow jobs, and are omitted.
 
     Args:
         dependency: Maps each job name to a Slurm dependency string such as
@@ -55,7 +56,9 @@ def as_dict(dependency):
         for val in pattern.split(value):
             if val in keywords:
                 continue
-            names[name].append(_split_suffix(val)[0])
+            head = _split_suffix(val)[0]
+            if not head.isdigit():  # all-digit tokens are existing Slurm job IDs
+                names[name].append(head)
     return dict(names)
 
 
@@ -108,7 +111,7 @@ def _formatted(job_str: str) -> str:
     parts = [keyword]
     for name in names:
         head, tail = _split_suffix(name)
-        parts.append(f"{{{head}}}{tail}")
+        parts.append(f"{head}{tail}" if head.isdigit() else f"{{{head}}}{tail}")
     return ":".join(parts)
 
 
@@ -218,24 +221,34 @@ def check_output(task, *args, **kwargs):
     return bytes(str(random.randint(0, 1000)), encoding="utf-8")
 
 
-def dot_to_ascii(g):
-    """Render a Graphviz graph as ASCII art via an external HTTP API.
+def ascii_graph(dependency, jobs=(), labels=None):
+    """Render the workflow as indented plain text, one job per line.
 
-    Sends the graph's DOT source to ``dot-to-ascii.ggerganov.com`` and prints
-    the resulting ASCII diagram to stdout.
+    Jobs are listed in submission order and indented by their depth in the
+    DAG; each line ends with ``<- predecessors``. Runs locally, so job names
+    never leave the machine.
 
     Args:
-        g: A :class:`graphviz.Digraph` (or similar) whose ``__str__`` produces
-            valid DOT syntax.
+        dependency: Maps each job name to a Slurm dependency string.
+        jobs: Optional iterable of job names to include as independent roots.
+        labels: Optional mapping of job name to display text.
 
     Returns:
-        The ASCII art string returned by the API.
+        The multi-line string.
     """
-    url = "https://dot-to-ascii.ggerganov.com/dot-to-ascii.php"
-    params = {"boxart": 1, "src": str(g)}
-    res = requests.get(url, params=params).text
-    print(res)
-    return res
+    deps = as_dict(dependency)
+    for name in jobs:
+        deps.setdefault(name, [])
+    level = {}
+    lines = []
+    for name in TopologicalSorter(deps).static_order():
+        preds = deps.get(name, [])
+        level[name] = 1 + max((level[p] for p in preds), default=-1)
+        text = (labels or {}).get(name, name)
+        if preds:
+            text += "  <- " + ", ".join(preds)
+        lines.append("    " * level[name] + text)
+    return "\n".join(lines)
 
 
 def in_jupyter():
