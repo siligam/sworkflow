@@ -23,6 +23,7 @@ sworkflow's dependency-parsing logic into your own tooling.
         - as_dict
         - as_tuple
         - as_placeholder
+        - ascii_graph
         - task_ordering
         - parse_array_status
         - check_output

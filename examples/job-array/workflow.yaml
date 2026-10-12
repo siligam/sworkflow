@@ -5,14 +5,11 @@
 # C starts when 'array' completes OK         (afterok — waits for full completion)
 # D starts 1 minute after B starts           (after:B+1 — +n means n-minute delay)
 #
-# Jobs B, C, D are not defined under 'jobs', so they use the default:
-#   sbatch --wrap="sleep 2"
-#
 # Demonstrates:
 #   - Slurm job arrays (--array)
 #   - 'after' vs 'afterok': timing vs outcome dependency
 #   - +n minute-offset syntax on a dependency
-#   - implicit default job for undefined entries
+#   - trivial placeholder jobs (--wrap='sleep 2') for B, C and D
 
 dependency:
   B: after:array
@@ -21,3 +18,6 @@ dependency:
 
 jobs:
   array: --array=5,10,15,20,25 --wrap='sleep $SLURM_ARRAY_TASK_ID'
+  B: --wrap='sleep 2'
+  C: --wrap='sleep 2'
+  D: --wrap='sleep 2'

@@ -79,3 +79,20 @@ def test_submit_force_flag_passed(wf):
         res = CliRunner().invoke(cli, ["-f", wf, "submit", "--force"])
     assert res.exit_code == 0
     sub.assert_called_once_with(dry_run=False, force=True)
+
+
+def test_vis_pdf_renders_with_rankdir(wf):
+    with patch.object(Suite, "visualize", return_value="wf-graph.pdf") as vis:
+        res = CliRunner().invoke(cli, ["-f", wf, "vis", "--pdf", "--rankdir", "tb"])
+    assert res.exit_code == 0, res.output
+    assert "wrote wf-graph.pdf" in res.output
+    vis.assert_called_once_with(rankdir="TB", as_ascii=False, view_pdf=False)
+
+
+def test_vis_pdf_without_dot_is_clean_error(wf):
+    import graphviz
+
+    with patch.object(Suite, "visualize", side_effect=graphviz.ExecutableNotFound(["dot"])):
+        res = CliRunner().invoke(cli, ["-f", wf, "vis", "--pdf"])
+    assert res.exit_code == 1
+    assert "dot" in res.output and "Traceback" not in res.output

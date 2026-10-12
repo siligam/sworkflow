@@ -21,6 +21,7 @@ The `jobs` section maps each job name to the shell command or script used to sub
 !!! tip
     If a job command does not include `sbatch`, it is prepended automatically.
     You can pass raw `sbatch` flags directly, e.g. `--mem=40G my_script.sh`.
+    Every job named under `dependency` must be defined under `jobs`; an unknown name (usually a typo) is an error.
 
 ## 2. Visualize the graph
 
@@ -30,14 +31,12 @@ Before submitting, render the dependency graph to verify it looks correct:
 sworkflow -f workflow.yaml vis
 ```
 
-Output:
+Output (plain text; each job is indented by its depth and lists its predecessors):
 
 ```
 preprocess
-   |
- train
-   |
-postprocess
+    train  <- preprocess
+        postprocess  <- train
 ```
 
 ## 3. Dry-run
@@ -48,12 +47,13 @@ Check the exact `sbatch` commands that will be generated without running anythin
 sworkflow -f workflow.yaml submit --dry-run
 ```
 
-Output:
+Output (the job IDs are fake; a dry run does not touch `workflow.yaml`):
 
 ```
 preprocess=$(sbatch --parsable preprocess.sh)
-train=$(sbatch --parsable --dependency=afterok:{preprocess} train.sh)
-postprocess=$(sbatch --parsable --dependency=afterok:{train} postprocess.sh)
+train=$(sbatch --parsable --dependency=afterok:576 train.sh)
+postprocess=$(sbatch --parsable --dependency=afterok:627 postprocess.sh)
+{'preprocess': '576', 'train': '627', 'postprocess': '655'}
 ```
 
 ## 4. Submit
@@ -63,6 +63,7 @@ sworkflow -f workflow.yaml submit
 ```
 
 Job IDs are printed and written back to `workflow.yaml` so `status` can find them later.
+Running `submit` again on that file is refused, to avoid duplicate jobs; add `--force` to submit it anyway.
 
 ## 5. Check status
 
@@ -125,6 +126,9 @@ suite.visualize(as_ascii=True)      # print ASCII graph
 suite.submit()                       # submit; saves job IDs to submit.yaml
 suite.update_status()                # query sacct for current state
 ```
+
+`submit(dry_run=True)` prints the commands and returns fake IDs without storing them on the suite or writing a file.
+`submit()` on a suite that already has `job_ids` raises `ValueError`; pass `force=True` to submit again.
 
 ### Reload a submitted workflow
 

@@ -3,6 +3,7 @@ import subprocess
 from graphlib import CycleError
 
 import click
+import graphviz
 import yaml
 
 from . import Suite, utils
@@ -10,6 +11,7 @@ from . import Suite, utils
 """
 
 sworkflow --filename name.yaml vis
+sworkflow --filename name.yaml vis --pdf --rankdir TB
 export SFILE=name.yaml
 sworkflow vis --rankdir 'TB'
 sworkflow submit --dry-run
@@ -74,12 +76,18 @@ def cli(ctx, filename):
     show_default=True,
     help="direction of graph layout, LR|RL|TB|BT",
 )
+@click.option(
+    "--pdf",
+    is_flag=True,
+    help="write a Graphviz PDF (<name>-graph.pdf, needs `dot`) instead of text",
+)
 @pass_config
-def visualize(ctx, rankdir):
+def visualize(ctx, rankdir, pdf):
     """Visualize the task dependency as described in the yaml file.
 
-    Change graph layout with `--rankdir` option. It also accepts
-    `right|left|top|down` as parameters.
+    Prints a plain-text graph, or with `--pdf` writes a Graphviz PDF next to
+    the current directory. Change the PDF layout with `--rankdir`; it also
+    accepts `right|left|down|up` as parameters.
     """
     mapper = {
         "LR": ("lr", "r", "right", "forward", "forwards"),
@@ -97,7 +105,18 @@ def visualize(ctx, rankdir):
     if target is None:
         click.echo(f"{rankdir} is not valid, using default LeftRight layout.")
         target = "LR"
-    ctx.load().visualize(rankdir=target)
+    suite = ctx.load()
+    if not pdf:
+        suite.visualize(rankdir=target)
+        return
+    try:
+        path = suite.visualize(rankdir=target, as_ascii=False, view_pdf=False)
+    except graphviz.ExecutableNotFound:
+        raise click.ClickException(
+            "--pdf needs the Graphviz `dot` executable on PATH "
+            "(e.g. `module load graphviz`, `conda install graphviz`)"
+        )
+    click.echo(f"wrote {path}")
 
 
 @cli.command()

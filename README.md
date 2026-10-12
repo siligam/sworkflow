@@ -81,7 +81,7 @@ jobs:
 - **Declarative workflow definition** – express dependencies in a dictionary or YAML file
 - **Visualization** – generate ASCII or graph-based DAGs before submission
 - **Python API & CLI** – use as a library or standalone tool
-- **Safer workflows** – prevents dependency cycles, ensures correct ordering
+- **Safer workflows** – rejects dependency cycles and unknown job names before anything is submitted, ensures correct ordering
 - **Config-driven** – define jobs in YAML for reuse and easy editing
 
 ---
@@ -162,6 +162,12 @@ jobs:              # map[job] -> shell command or path to script
 **Note:** If a job value does not include the word `sbatch`, `sworkflow` will automatically prepend
 `sbatch --parsable` and inject the appropriate `--dependency=...` flag based on your `dependency`
 mapping. You may also pass raw sbatch flags directly (e.g., `--array=... --wrap=...`).
+If the command already contains `sbatch` (even after a prefix such as `env X=1 sbatch job.sh`), the flags are
+inserted right after it. A job that sets its own `--dependency` *and* has a `dependency` entry is rejected.
+
+**Job names:** every name used under `dependency` must also be defined under `jobs`. Avoid names that
+end in `_<number>` (e.g. `step_2`): in a dependency that is read as task 2 of job array `step`.
+Names made only of digits are not allowed, since a bare number refers to an existing Slurm job ID.
 
 ---
 
@@ -189,6 +195,9 @@ suite.visualize(as_ascii=True)
 suite.submit()           # submits jobs; saves job IDs to submit.yaml
 suite.update_status()    # queries sacct and populates suite.status
 ```
+
+`submit(dry_run=True)` prints the commands and returns fake job IDs without storing them or writing any file.
+A suite that already has `job_ids` refuses a second `submit()` (to avoid duplicate jobs); pass `force=True` to override.
 
 After `submit()`, job IDs are persisted to a YAML file (defaults to `submit.yaml`, or the file the suite was loaded from). You can reload a previously submitted workflow to check status:
 
@@ -256,6 +265,8 @@ All standard Slurm dependency conditions are supported:
 | `singleton` | Run once no other job with the same name is running |
 
 Multiple predecessors are colon-separated: `afterok:B:C` means run after both B and C succeed.
+Combine conditions with `,` (**all** must be satisfied, e.g. `afterok:A,afternotok:B`) or `?` (**any** one is enough).
+Append `+n` to delay a dependency by `n` minutes, e.g. `after:B+1`.
 All referenced predecessors must be defined under `jobs`; an unknown name is an error.
 An all-digit token such as `afterok:123456` refers to an existing Slurm job and is passed through as-is.
 
@@ -280,21 +291,24 @@ jobs:
 sworkflow -f workflow.yaml vis
 ```
 
-Output:
+Output (plain text, rendered locally; each job is indented by its depth and lists its predecessors):
 
 ```text
 preprocess
-   |
- train
-   |
-postprocess
+    train  <- preprocess
+        postprocess  <- train
 ```
+
+For a Graphviz diagram run `sworkflow -f workflow.yaml vis --pdf`, which writes `<workflow-name>-graph.pdf`
+into the current directory (requires the `dot` executable). `--rankdir` sets the layout direction of the PDF;
+the text view ignores it. From Python use `suite.visualize(as_ascii=False)`.
 
 ---
 
 ## ❓ CLI Reference
 
-All commands accept `-f/--filename` or the `SFILE` environment variable to specify the workflow file.
+All commands require `-f/--filename` or the `SFILE` environment variable to specify the workflow file.
+Problems such as a missing file, an unknown job name or a dependency cycle are reported as a one-line error (exit code 1) instead of a traceback.
 
 ```bash
 export SFILE=workflow.yaml   # set once, all commands use it
@@ -302,31 +316,35 @@ export SFILE=workflow.yaml   # set once, all commands use it
 
 ### `sworkflow vis`
 
-Render the dependency graph as ASCII art.
+Print the dependency graph as plain text.
 
 ```bash
-sworkflow -f workflow.yaml vis [--rankdir LR|RL|TB|BT]
+sworkflow -f workflow.yaml vis [--pdf] [--rankdir LR|RL|TB|BT]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--rankdir` | `LR` | Graph layout direction. Aliases accepted: `right`/`left`/`down`/`up` |
+| `--pdf` | off | Write a Graphviz PDF (`<workflow-name>-graph.pdf`, needs `dot`) instead of printing text |
+| `--rankdir` | `LR` | Graph layout direction for the PDF (the text view ignores it). Aliases accepted: `right`/`left`/`down`/`up` |
 
 ### `sworkflow submit`
 
 Submit all jobs to Slurm in dependency order. Job IDs are written back to the YAML file on completion so `status` can find them.
 
 ```bash
-sworkflow -f workflow.yaml submit [--dry-run]
+sworkflow -f workflow.yaml submit [--dry-run] [--force]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--dry-run` | Print the sbatch commands without executing them; uses fake job IDs |
+| `--dry-run` | Print the sbatch commands without executing them; uses fake job IDs and never writes the file |
+| `--force` | Submit even if the file already has `job_ids` (refused by default to avoid duplicate jobs) |
+
+If a later `sbatch` call fails, the IDs of the jobs already submitted are still saved to the file before the error is reported.
 
 ### `sworkflow status`
 
-Query Slurm for the current state of all submitted jobs.
+Query Slurm for the current state of all submitted jobs. A job that `sacct` does not know (for example because its accounting record has expired) is shown as `UNKNOWN`.
 
 ```bash
 sworkflow -f workflow.yaml status [--vis]
@@ -364,15 +382,19 @@ chmod +x examples/minimal/*.sh
 ## ⚠️ Error Handling
 
 - Dependencies are resolved using `graphlib.TopologicalSorter`, preventing cycles
+- A dependency on a job that is not defined under `jobs` (usually a typo) is rejected before any job is submitted
+- `submit` refuses a file that already has `job_ids` unless `--force` is given
 - Jobs will only run if their dependency conditions (`afterok`, `afterany`, `afternotok`) are satisfied
 - Use `sworkflow status` to monitor running workflows
 
 ## 🛠️ Troubleshooting
 
 - `command not found: sbatch` – ensure Slurm is installed/loaded and on your PATH (e.g., `module load slurm`)
-- Graphviz visualization fails – install `graphviz` and ensure `dot` is on PATH
+- `vis --pdf` fails with "needs the Graphviz `dot` executable" – install Graphviz and ensure `dot` is on PATH (e.g. `module load graphviz`)
 - Jobs stuck in PENDING – check partition/account/QA constraints and your
   `sbatch` resource flags (`--time`, `--mem`, `--account`, etc.)
+- `Error: jobs not defined in 'jobs': ...` – a name in `dependency` has no entry under `jobs`; check for a typo
+- `Error: workflow already has job_ids` – the file was submitted before; use `--force` to submit it again (the earlier jobs keep running)
 - `status` shows nothing – confirm `sacct` is enabled at your site and you have permission to query accounting data
 
 ## 🧭 Scope & limitations
@@ -396,6 +418,7 @@ chmod +x examples/minimal/*.sh
 Issues and pull requests are welcome!
 
 - Fork the repo and create a feature branch
+- Set up a development environment: `pip install -e ".[dev]"` (add `.[docs]` to build the docs), then run `pytest` (no Slurm needed)
 - Add tests or examples if applicable
 - Submit a pull request with a clear description
 

@@ -498,3 +498,27 @@ class TestVisualize:
         with patch.object(s, "update_status"), patch("graphviz.Digraph.render") as r:
             s.visualize(as_ascii=False, view_pdf=False)
         assert r.call_args.args[0] == "my_wf-graph"
+
+
+def test_visualize_pdf_returns_rendered_path():
+    s = make_suite()
+    s.filename = "wf.yaml"
+    with patch.object(s, "update_status"), patch(
+        "graphviz.Digraph.render", return_value="wf-graph.pdf"
+    ):
+        assert s.visualize(as_ascii=False, view_pdf=False) == "wf-graph.pdf"
+
+
+def test_visualize_pdf_failure_leaves_no_source_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    s = make_suite()
+    s.filename = "wf.yaml"
+
+    def render(self, name, **kw):
+        Path(name).write_text("digraph {}")  # what graphviz does before running dot
+        raise RuntimeError("dot missing")
+
+    with patch.object(s, "update_status"), patch("graphviz.Digraph.render", render):
+        with pytest.raises(RuntimeError):
+            s.visualize(as_ascii=False, view_pdf=False)
+    assert list(tmp_path.iterdir()) == []
