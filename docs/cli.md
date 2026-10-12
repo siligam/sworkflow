@@ -33,12 +33,13 @@ sworkflow -f workflow.yaml vis --rankdir TB
 Submit all jobs to Slurm in dependency order. Job IDs are written back to the YAML file on completion so `status` can find them.
 
 ```bash
-sworkflow -f workflow.yaml submit [--dry-run]
+sworkflow -f workflow.yaml submit [--dry-run] [--force]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--dry-run` | Print the sbatch commands without executing them; uses fake job IDs |
+| `--dry-run` | Print the sbatch commands without executing them; uses fake job IDs and never writes the file |
+| `--force` | Submit even if the file already has `job_ids` (refused by default to avoid duplicate jobs) |
 
 **Recommended workflow:**
 

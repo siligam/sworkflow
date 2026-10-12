@@ -1,6 +1,11 @@
 import os
+import subprocess
+from graphlib import CycleError
+
 import click
-from . import Suite
+import yaml
+
+from . import Suite, utils
 
 """
 
@@ -17,7 +22,21 @@ SFILE=other.yaml sworkflow vis
 class Config:
     def __init__(self):
         self.filename = None
-        self.suite = None
+
+    def load(self):
+        """Load and validate the workflow file, turning failures into CLI errors."""
+        if not self.filename:
+            raise click.UsageError(
+                "no workflow file: use -f/--filename or set the SFILE environment variable"
+            )
+        try:
+            suite = Suite.load_yaml(self.filename)
+            utils.task_ordering(suite.dependency, suite.jobs)
+        except (OSError, yaml.YAMLError) as e:
+            raise click.ClickException(str(e))
+        except CycleError as e:
+            raise click.ClickException("dependency cycle: " + " -> ".join(e.args[1]))
+        return suite
 
 
 pass_config = click.make_pass_decorator(Config, ensure=True)
@@ -43,11 +62,6 @@ def cli(ctx, filename):
     `-f/--filename` option or set the environment variable `SFILE`.
     """
     sfile = os.environ.get("SFILE", None)
-    if filename:
-        s = Suite.load_yaml(filename)
-    else:
-        s = Suite(dependency={})
-    ctx.suite = s
     ctx.filename = filename
     if sfile:
         click.echo("suite definition: {}\n".format(sfile))
@@ -71,7 +85,7 @@ def visualize(ctx, rankdir):
         "LR": ("lr", "r", "right", "forward", "forwards"),
         "RL": ("rl", "l", "left", "backward", "backwards"),
         "TB": ("tb", "d", "down", "downward", "downwards"),
-        "BT": ("BT", "u", "up", "upward", "upwards"),
+        "BT": ("bt", "u", "up", "upward", "upwards"),
     }
     rank = rankdir.lower()
     for name, options in mapper.items():
@@ -83,20 +97,30 @@ def visualize(ctx, rankdir):
     if target is None:
         click.echo(f"{rankdir} is not valid, using default LeftRight layout.")
         target = "LR"
-    ctx.suite.visualize(rankdir=target)
+    ctx.load().visualize(rankdir=target)
 
 
 @cli.command()
 @click.option(
     "--dry-run", is_flag=True, help="simulates job submission with Fake job-ids"
 )
+@click.option(
+    "--force", is_flag=True, help="submit again even if the file already has job-ids"
+)
 @pass_config
-def submit(ctx, dry_run):
+def submit(ctx, dry_run, force):
     """Submits jobs to slurm and updates the yaml file with job-ids
 
-    `--dry-run` simulates job submission with Fake job-ids.
+    `--dry-run` prints the sbatch commands with fake job-ids and does not touch
+    the yaml file. A file that already has job-ids is refused unless `--force`.
     """
-    job_ids = ctx.suite.submit(dry_run=dry_run)
+    suite = ctx.load()
+    try:
+        job_ids = suite.submit(dry_run=dry_run, force=force)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    except subprocess.CalledProcessError as e:
+        raise click.ClickException(f"sbatch failed: {e}")
     click.echo(job_ids)
 
 
@@ -109,8 +133,9 @@ def status(ctx, vis):
 
     Status of currently running and completed jobs in the suite are displayed.
     """
-    res = ctx.suite.update_status()
+    suite = ctx.load()
+    res = suite.update_status()
     for line in res:
-        click.echo("  ".join(line))
+        click.echo("  ".join(x or "UNKNOWN" for x in line))
     if vis:
-        ctx.suite.visualize()
+        suite.visualize()

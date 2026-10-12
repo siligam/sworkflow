@@ -256,7 +256,8 @@ All standard Slurm dependency conditions are supported:
 | `singleton` | Run once no other job with the same name is running |
 
 Multiple predecessors are colon-separated: `afterok:B:C` means run after both B and C succeed.
-All referenced predecessors must be defined under `jobs`.
+All referenced predecessors must be defined under `jobs`; an unknown name is an error.
+An all-digit token such as `afterok:123456` refers to an existing Slurm job and is passed through as-is.
 
 Example:
 

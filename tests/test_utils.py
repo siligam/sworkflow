@@ -233,3 +233,71 @@ class TestInJupyter:
     def test_returns_false_outside_jupyter(self):
         # In a pytest runner there is no IPython kernel
         assert in_jupyter() is False
+
+
+# ---------------------------------------------------------------------------
+# regressions: underscores in names, jobs without predecessors
+# ---------------------------------------------------------------------------
+
+class TestUnderscoreNames:
+    def test_as_dict_keeps_underscored_name(self):
+        assert as_dict({"post_process": "afterok:pre_process"}) == {
+            "post_process": ["pre_process"]
+        }
+
+    def test_as_dict_multiple_underscores(self):
+        assert as_dict({"c": "afterok:my_pre_proc"}) == {"c": ["my_pre_proc"]}
+
+    def test_array_suffix_after_underscored_name(self):
+        assert as_dict({"c": "afterok:my_job_10"}) == {"c": ["my_job"]}
+
+    def test_as_tuple_keeps_underscored_name(self):
+        assert as_tuple({"c": "afterok:my_pre_proc"}) == {
+            "c": ["afterok", "my_pre_proc"]
+        }
+
+    def test_placeholder_underscored_name(self):
+        assert as_placeholder({"c": "afterok:my_pre_proc"}) == {
+            "c": "afterok:{my_pre_proc}"
+        }
+
+    def test_placeholder_underscored_name_with_array_suffix(self):
+        assert as_placeholder({"c": "afterok:my_job_10"}) == {
+            "c": "afterok:{my_job}_10"
+        }
+
+
+class TestOrderingIncludesAllJobs:
+    def test_singleton_job_is_ordered(self):
+        assert set(task_ordering({"a": "singleton"})) == {"a"}
+
+    def test_independent_job_from_jobs_is_ordered(self):
+        order = task_ordering({"b": "afterok:a"}, jobs=["a", "b", "c"])
+        assert set(order) == {"a", "b", "c"}
+        assert order.index("a") < order.index("b")
+
+
+class TestExistingSlurmIds:
+    def test_digit_token_is_not_a_job(self):
+        assert as_dict({"b": "afterok:123456"}) == {"b": []}
+        assert as_dict({"b": "afterok:123456_4:a"}) == {"b": ["a"]}
+        assert task_ordering({"b": "afterok:123456"}) == ["b"]
+
+    def test_digit_token_not_a_placeholder(self):
+        assert as_placeholder({"b": "afterok:123456:a"}) == {"b": "afterok:123456:{a}"}
+        assert as_placeholder({"b": "afterok:123456_4"}) == {"b": "afterok:123456_4"}
+
+
+class TestAsciiGraph:
+    def test_layers_and_predecessors(self):
+        from sworkflow.utils import ascii_graph
+        out = ascii_graph({"c": "afterok:a:b", "b": "afterok:a"}, jobs=["z"])
+        lines = out.splitlines()
+        assert "a" in lines
+        assert "    b  <- a" in lines
+        assert "        c  <- a, b" in lines
+        assert "z" in lines
+
+    def test_labels(self):
+        from sworkflow.utils import ascii_graph
+        assert "a 12 RUNNING" in ascii_graph({"b": "afterok:a"}, labels={"a": "a 12 RUNNING"})

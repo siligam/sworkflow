@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # suite.py
-import random
+import os
 import shlex
+import shutil
 import subprocess as sp
 import graphviz
 from . import utils
@@ -78,8 +79,8 @@ class Suite:
     def load_yaml(cls, filename):
         """Load a workflow from a YAML file.
 
-        The file must contain a ``dependency`` key. ``jobs`` and ``job_ids``
-        are optional and default to empty dicts if absent.
+        All of ``dependency``, ``jobs`` and ``job_ids`` are optional and
+        default to empty dicts if absent.
 
         Args:
             filename: Path to the YAML workflow file.
@@ -89,7 +90,8 @@ class Suite:
             given path.
         """
         d = utils.load_yaml(filename)
-        dependency = d["dependency"]
+        d = d or {}
+        dependency = d.get("dependency", {})
         jobs = d.get("jobs", {})
         job_ids = d.get("job_ids", {})
         c = cls(dependency, jobs, job_ids)
@@ -123,62 +125,116 @@ class Suite:
           resolved to real Slurm IDs at submission time.
 
         Results are stored in :attr:`job_template`. Jobs not present in
-        :attr:`jobs` receive the default command ``sbatch --wrap="sleep 2"``.
+        :attr:`jobs` receive the default command ``sbatch --wrap="sleep 2"``
+        only when :attr:`jobs` is empty (a quick demo); otherwise a job named
+        in the dependencies but missing from :attr:`jobs` is an error.
+
+        ``sbatch`` may appear anywhere in the command (e.g. after ``env X=1``);
+        the extra flags are inserted right after it.
+
+        Raises:
+            ValueError: If :attr:`jobs` is non-empty and a job named in
+                :attr:`dependency` has no entry in it (usually a typo), or if a
+                job both sets its own ``--dependency`` and has a dependency
+                entry.
         """
         dependency = self.dependency
-        ordering = utils.task_ordering(dependency)
+        ordering = utils.task_ordering(dependency, self.jobs)
         dependency_placeholder = utils.as_placeholder(dependency)
         jobs = self.jobs
+        missing = [n for n in ordering if jobs and n not in jobs]
+        if missing:
+            raise ValueError(f"jobs not defined in 'jobs': {', '.join(missing)}")
         result = {}
         for task_name in ordering:
             job = jobs.get(task_name, default_task)
             parts = shlex.split(job)
-            if "sbatch" not in parts:
+            at = next(
+                (i for i, p in enumerate(parts) if os.path.basename(p) == "sbatch"),
+                None,
+            )
+            if at is None:
                 parts.insert(0, "sbatch")
-            if "--parsable" not in parts:
-                parts.insert(1, "--parsable")
+                at = 0
+            extra = [] if "--parsable" in parts else ["--parsable"]
             if task_name in dependency_placeholder:
-                dep = dependency_placeholder.get(task_name)
-                dep = "--dependency=" + dep
-                parts.insert(2, dep)
+                if any(
+                    p in ("-d", "--dependency") or p.startswith("--dependency=")
+                    for p in parts
+                ):
+                    raise ValueError(
+                        f"job '{task_name}' has its own --dependency flag and an "
+                        "entry under 'dependency'; use only one"
+                    )
+                extra.append("--dependency=" + dependency_placeholder[task_name])
+            parts[at + 1 : at + 1] = extra
             result[task_name] = shlex.join(parts)
         self.job_template.update(result)
 
-    def submit(self, dry_run=False):
+    def submit(self, dry_run=False, force=False):
         """Submit all jobs to Slurm in dependency order.
 
         Calls :meth:`prepare_jobs`, then iterates jobs in topological order,
         substituting captured job IDs into dependency placeholders before each
         ``sbatch`` call. The resulting job IDs are written back to
         :attr:`job_ids` and the workflow is saved to :attr:`filename` (defaulting
-        to ``"submit.yaml"``).
+        to ``"submit.yaml"``). If a later ``sbatch`` call fails, the IDs of the
+        jobs already submitted are still saved before the error propagates. A
+        dry run never writes the file or changes :attr:`job_ids`.
 
         Args:
             dry_run: When ``True``, commands are printed to stdout instead of
                 executed and fake random job IDs are used. Useful for
                 validating the generated sbatch commands before real submission.
+            force: Resubmit even though :attr:`job_ids` is already populated
+                (the workflow was submitted before). The old IDs are discarded;
+                the earlier jobs keep running in Slurm.
 
         Returns:
-            :attr:`job_ids` dict mapping each job name to its Slurm job ID
-            string (or a fake ID string in dry-run mode).
+            Dict mapping each job name to its Slurm job ID string (a fake ID
+            in dry-run mode).
+
+        Raises:
+            ValueError: If :attr:`job_ids` is populated and ``force`` is false.
         """
+        if self.job_ids and not (dry_run or force):
+            raise ValueError(
+                "workflow already has job_ids (submitted before?); "
+                "pass force=True to submit it again"
+            )
         func = (sp.check_output, utils.check_output)[dry_run]
-        self.filename = self.filename or "submit.yaml"
-        filename = self.filename
-        ordering = utils.task_ordering(self.dependency)
+        ordering = utils.task_ordering(self.dependency, self.jobs)
         self.prepare_jobs()
-        job_template = self.job_template
-        job_ids = self.job_ids
-        for task_name in ordering:
-            job = job_template.get(task_name)
-            job = job.format_map(utils.Default(job_ids))
-            if dry_run:
-                job_id = func(shlex.split(job), task_name=task_name)
-            else:
-                job_id = func(shlex.split(job))
-            job_ids[task_name] = job_id.decode("utf-8").strip()
-        self.save_yaml(filename)
-        return self.job_ids
+        if dry_run:
+            job_ids = dict(self.job_ids)
+        else:
+            self.filename = self.filename or "submit.yaml"
+            job_ids = self.job_ids
+            job_ids.clear()
+        submitted = 0
+        try:
+            for task_name in ordering:
+                fill = utils.Default(job_ids)
+                # only the dependency flag holds placeholders; braces elsewhere
+                # in the user's command must be left alone
+                cmd = [
+                    p.format_map(fill) if p.startswith("--dependency=") else p
+                    for p in shlex.split(self.job_template[task_name])
+                ]
+                if dry_run:
+                    job_id = func(cmd, task_name=task_name)
+                else:
+                    job_id = func(cmd)
+                job_ids[task_name] = job_id.decode("utf-8").strip()
+                submitted += 1
+        finally:
+            if submitted and not dry_run:
+                self.save_yaml(self.filename)
+        return job_ids
+
+    def _label(self, name):
+        parts = [name, self.job_ids.get(name), self.status.get(name)]
+        return " ".join(filter(None, parts))
 
     def graph(self, rankdir="LR"):
         """Build a Graphviz directed graph of the workflow.
@@ -197,13 +253,11 @@ class Suite:
         """
         self.update_status()
         d = utils.as_dict(self.dependency)
-        ordering = utils.task_ordering(self.dependency)
+        ordering = utils.task_ordering(self.dependency, self.jobs)
         g = graphviz.Digraph()
         g.graph_attr["rankdir"] = rankdir
         for name in ordering:
-            label = [name, self.job_ids.get(name, ""), self.status.get(name, "")]
-            label = " ".join(filter(None, label))
-            g.node(name, label)
+            g.node(name, self._label(name))
         for name, values in d.items():
             for item in values:
                 g.edge(item, name)
@@ -216,8 +270,8 @@ class Suite:
 
         - **Jupyter notebook**: returns the :class:`graphviz.Digraph` object
           directly so Jupyter renders it inline.
-        - **Terminal (default)**: converts the graph to ASCII art via an
-          external HTTP API and prints it.
+        - **Terminal (default)**: prints a local plain-text rendering (see
+          :func:`~sworkflow.utils.ascii_graph`). Nothing leaves the machine.
         - **PDF mode** (``as_ascii=False``): renders a PDF with Graphviz and
           optionally opens it in the default viewer.
 
@@ -236,9 +290,12 @@ class Suite:
         if utils.in_jupyter():
             return g
         if as_ascii:
-            utils.dot_to_ascii(g)
+            order = utils.task_ordering(self.dependency, self.jobs)
+            labels = {n: self._label(n) for n in order}
+            print(utils.ascii_graph(self.dependency, self.jobs, labels))
             return g
-        g.render(f"slurmviz-{str(random.randint(0, 20))}", view=view_pdf)
+        stem = os.path.splitext(os.path.basename(self.filename or "sworkflow"))[0]
+        g.render(f"{stem}-graph", view=view_pdf, cleanup=True)
 
     def update_status(self):
         """Query Slurm for the current state of all submitted jobs.
@@ -257,9 +314,7 @@ class Suite:
         result = []
         if not self.job_ids:
             return result
-        try:
-            sp.call(["sacct"], stdout=sp.PIPE, close_fds=True)
-        except FileNotFoundError:
+        if shutil.which("sacct") is None:
             return result
         jobids = ",".join(self.job_ids.values())
         cmd = sacct_cmd.format(jobids)
