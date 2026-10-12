@@ -71,7 +71,7 @@ def visualize(ctx, rankdir):
         "LR": ("lr", "r", "right", "forward", "forwards"),
         "RL": ("rl", "l", "left", "backward", "backwards"),
         "TB": ("tb", "d", "down", "downward", "downwards"),
-        "BT": ("BT", "u", "up", "upward", "upwards"),
+        "BT": ("bt", "u", "up", "upward", "upwards"),
     }
     rank = rankdir.lower()
     for name, options in mapper.items():
@@ -111,6 +111,6 @@ def status(ctx, vis):
     """
     res = ctx.suite.update_status()
     for line in res:
-        click.echo("  ".join(line))
+        click.echo("  ".join(x or "UNKNOWN" for x in line))
     if vis:
         ctx.suite.visualize()
